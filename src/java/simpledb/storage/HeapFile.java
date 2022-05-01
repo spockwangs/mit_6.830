@@ -22,6 +22,9 @@ import java.util.*;
  */
 public class HeapFile implements DbFile {
 
+    private final File file;
+    private final TupleDesc td;
+    
     /**
      * Constructs a heap file backed by the specified file.
      * 
@@ -31,6 +34,8 @@ public class HeapFile implements DbFile {
      */
     public HeapFile(File f, TupleDesc td) {
         // some code goes here
+        this.file = f;
+        this.td = td;
     }
 
     /**
@@ -40,7 +45,7 @@ public class HeapFile implements DbFile {
      */
     public File getFile() {
         // some code goes here
-        return null;
+        return this.file;
     }
 
     /**
@@ -54,7 +59,7 @@ public class HeapFile implements DbFile {
      */
     public int getId() {
         // some code goes here
-        throw new UnsupportedOperationException("implement this");
+        return this.file.getAbsoluteFile().hashCode();
     }
 
     /**
@@ -64,13 +69,26 @@ public class HeapFile implements DbFile {
      */
     public TupleDesc getTupleDesc() {
         // some code goes here
-        throw new UnsupportedOperationException("implement this");
+        return this.td;
     }
 
     // see DbFile.java for javadocs
     public Page readPage(PageId pid) {
         // some code goes here
-        return null;
+        int pageSize = Database.getBufferPool().getPageSize();
+        int start = pid.getPageNumber() * pageSize;
+        try {
+            byte[] data = new byte[pageSize];
+            FileInputStream fin = new FileInputStream(this.file);
+            fin.skip(start);
+            fin.read(data);
+            HeapPageId hPageId = new HeapPageId(pid.getTableId(), pid.getPageNumber());
+            HeapPage page = new HeapPage(hPageId, data);
+            return page;
+        } catch (IOException e) {
+            e.printStackTrace();
+            return null;
+        }
     }
 
     // see DbFile.java for javadocs
@@ -84,7 +102,8 @@ public class HeapFile implements DbFile {
      */
     public int numPages() {
         // some code goes here
-        return 0;
+        long pageSize = Database.getBufferPool().getPageSize();
+        return (int) (this.file.length() / pageSize);
     }
 
     // see DbFile.java for javadocs
@@ -106,7 +125,56 @@ public class HeapFile implements DbFile {
     // see DbFile.java for javadocs
     public DbFileIterator iterator(TransactionId tid) {
         // some code goes here
-        return null;
+        return new DbFileIterator() {
+            private int curPageNo = 0;
+            private Iterator<Tuple> it = null;
+            
+            private Iterator<Tuple> getPageIterator(int pageNo) throws DbException, TransactionAbortedException {
+                HeapPageId pageId = new HeapPageId(getId(), curPageNo);
+                HeapPage page = (HeapPage) Database.getBufferPool().getPage(tid, pageId, Permissions.READ_ONLY);
+                return page.iterator();
+            }
+            
+            @Override 
+            public void open() throws DbException, TransactionAbortedException {
+                it = getPageIterator(curPageNo);
+            }
+
+            @Override
+            public boolean hasNext() throws DbException, TransactionAbortedException {
+                if (it == null) {
+                    return false;
+                }
+                while (!it.hasNext()) {
+                    ++curPageNo;
+                    if (curPageNo >= numPages()) {
+                        return false;
+                    }
+                    it = getPageIterator(curPageNo);
+                }
+                return true;
+            }
+
+            @Override
+            public Tuple next() throws DbException, TransactionAbortedException, NoSuchElementException {
+                if (hasNext()) {
+                    return it.next();
+                }
+                throw new NoSuchElementException();
+            }
+
+            @Override
+            public void rewind() throws DbException, TransactionAbortedException {
+                curPageNo = 0;
+                it = getPageIterator(curPageNo);
+            }
+
+            @Override
+            public void close() {
+                curPageNo = 0;
+                it = null;
+            }
+        };
     }
 
 }
