@@ -28,6 +28,8 @@ public class HeapPage implements Page {
     byte[] oldData;
     private final Byte oldDataLock= (byte) 0;
 
+    private TransactionId lastDirtyTxid = null;
+    
     /**
      * Create a HeapPage from a set of bytes of data read from disk.
      * The format of a HeapPage is a set of header bytes indicating
@@ -282,7 +284,8 @@ public class HeapPage implements Page {
             if (this.tuples[i] == null) {
                 this.tuples[i] = t;
                 markSlotUsed(i, true);
-                break;
+                t.setRecordId(new RecordId(this.pid, i));
+                return;
             }
         }
         throw new DbException("heap page is full");
@@ -295,6 +298,11 @@ public class HeapPage implements Page {
     public void markDirty(boolean dirty, TransactionId tid) {
         // some code goes here
         // not necessary for lab1
+        if (dirty) {
+            this.lastDirtyTxid = tid;
+        } else {
+            this.lastDirtyTxid = null;
+        }
     }
 
     /**
@@ -303,7 +311,7 @@ public class HeapPage implements Page {
     public TransactionId isDirty() {
         // some code goes here
 	// Not necessary for lab1
-        return null;      
+        return this.lastDirtyTxid;
     }
 
     /**
