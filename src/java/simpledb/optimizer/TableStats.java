@@ -2,10 +2,13 @@ package simpledb.optimizer;
 
 import simpledb.common.Database;
 import simpledb.common.Type;
+import simpledb.common.DbException;
 import simpledb.execution.Predicate;
 import simpledb.execution.SeqScan;
 import simpledb.storage.*;
 import simpledb.transaction.Transaction;
+import simpledb.transaction.TransactionId;
+import simpledb.transaction.TransactionAbortedException;
 
 import java.util.HashMap;
 import java.util.Iterator;
@@ -68,6 +71,24 @@ public class TableStats {
      */
     static final int NUM_HIST_BINS = 100;
 
+    private class Histogram {
+        public IntHistogram intHistogram = null;
+        public StringHistogram stringHistogram = null;
+        public int min;
+        public int max;
+
+        Histogram() {
+            this.min = Integer.MAX_VALUE;
+            this.max = Integer.MIN_VALUE;
+        }
+    };
+    
+    // Map field id => histogram
+    private Histogram[] fieldToHistogram;
+    private int numOfTuples;
+    private int numOfPages;
+    private int ioCostPerPage;
+    
     /**
      * Create a new TableStats object, that keeps track of statistics on each
      * column of a table
@@ -87,6 +108,63 @@ public class TableStats {
         // necessarily have to (for example) do everything
         // in a single scan of the table.
         // some code goes here
+        try {
+            this.ioCostPerPage = ioCostPerPage;
+            DbFile dbFile = Database.getCatalog().getDatabaseFile(tableid);
+            DbFileIterator it = dbFile.iterator(new TransactionId());
+            it.open();
+            TupleDesc td = dbFile.getTupleDesc();
+            this.fieldToHistogram = new Histogram[td.numFields()];
+            for (int i = 0; i < td.numFields(); ++i) {
+                this.fieldToHistogram[i] = new Histogram();
+            }
+            this.numOfTuples = 0;
+            while (it.hasNext()) {
+                ++this.numOfTuples;
+                Tuple t = it.next();
+                for (int i = 0; i < td.numFields(); ++i) {
+                    Histogram histogram = this.fieldToHistogram[i];
+                    Field field = t.getField(i);
+                    switch (td.getFieldType(i)) {
+                    case INT_TYPE:
+                        int v = ((IntField) field).getValue();
+                        histogram.min = Math.min(histogram.min, v);
+                        histogram.max = Math.max(histogram.max, v);
+                        break;
+                    }
+                }
+            }
+            it.rewind();
+            while (it.hasNext()) {
+                Tuple t = it.next();
+                for (int i = 0; i < td.numFields(); ++i) {
+                    Field field = t.getField(i);
+                    Histogram histogram = this.fieldToHistogram[i];
+                    switch (td.getFieldType(i)) {
+                    case INT_TYPE: {
+                        if (histogram.intHistogram == null) {
+                            histogram.intHistogram = new IntHistogram(NUM_HIST_BINS, histogram.min, histogram.max);
+                        }
+                        int v = ((IntField) field).getValue();
+                        histogram.intHistogram.addValue(v);
+                        break;
+                    }
+                    case STRING_TYPE: {
+                        if (histogram.stringHistogram == null) {
+                            histogram.stringHistogram = new StringHistogram(NUM_HIST_BINS);
+                        }
+                        String v = ((StringField) field).getValue();
+                        histogram.stringHistogram.addValue(v);
+                        break;
+                    }
+                    }
+                }
+            }
+            it.close();
+            this.numOfPages = td.getSize() * this.numOfTuples / Database.getBufferPool().getPageSize();
+        } catch (DbException | TransactionAbortedException e) {
+            e.printStackTrace();
+        }
     }
 
     /**
@@ -103,7 +181,7 @@ public class TableStats {
      */
     public double estimateScanCost() {
         // some code goes here
-        return 0;
+        return this.numOfPages * this.ioCostPerPage;
     }
 
     /**
@@ -117,7 +195,7 @@ public class TableStats {
      */
     public int estimateTableCardinality(double selectivityFactor) {
         // some code goes here
-        return 0;
+        return (int) (selectivityFactor * this.numOfTuples);
     }
 
     /**
@@ -132,7 +210,12 @@ public class TableStats {
      * */
     public double avgSelectivity(int field, Predicate.Op op) {
         // some code goes here
-        return 1.0;
+        Histogram histogram = this.fieldToHistogram[field];
+        if (histogram.intHistogram != null) {
+            return histogram.intHistogram.estimateSelectivity(op, (histogram.min + histogram.max)/2);
+        } else {
+            return histogram.stringHistogram.estimateSelectivity(op, "");
+        }
     }
 
     /**
@@ -150,7 +233,12 @@ public class TableStats {
      */
     public double estimateSelectivity(int field, Predicate.Op op, Field constant) {
         // some code goes here
-        return 1.0;
+        Histogram histogram = this.fieldToHistogram[field];
+        if (histogram.intHistogram != null) {
+            return histogram.intHistogram.estimateSelectivity(op, ((IntField) constant).getValue());
+        } else {
+            return histogram.stringHistogram.estimateSelectivity(op, ((StringField) constant).getValue());
+        }
     }
 
     /**
@@ -158,7 +246,7 @@ public class TableStats {
      * */
     public int totalTuples() {
         // some code goes here
-        return 0;
+        return this.numOfTuples;
     }
 
 }

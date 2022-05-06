@@ -6,6 +6,12 @@ import simpledb.execution.Predicate;
  */
 public class IntHistogram {
 
+    private int[] buckets;
+    private double width;
+    private final int min;
+    private final int max;
+    private int numOfTuples;
+    
     /**
      * Create a new IntHistogram.
      * 
@@ -22,16 +28,37 @@ public class IntHistogram {
      * @param min The minimum integer value that will ever be passed to this class for histogramming
      * @param max The maximum integer value that will ever be passed to this class for histogramming
      */
-    public IntHistogram(int buckets, int min, int max) {
+    public IntHistogram(int numOfbuckets, int min, int max) {
     	// some code goes here
+        this.buckets = new int[numOfbuckets];
+        this.min = min;
+        this.max = max;
+        this.width = ((double) (max-min))/numOfbuckets;
+        if (this.width < 1.0) {
+            this.width = 1.0;
+        }
+        this.numOfTuples = 0;
     }
 
+    private int getIndex(int v) {
+        int index = (int) Math.floor(((double) v - this.min) / this.width);
+        if (index >= this.buckets.length) {
+            if (v <= this.max) {
+                index = this.buckets.length-1;
+            }
+        }
+        return index;
+    }
+    
     /**
      * Add a value to the set of values that you are keeping a histogram of.
      * @param v Value to add to the histogram
      */
     public void addValue(int v) {
     	// some code goes here
+        int index = getIndex(v);
+        this.buckets[index]++;
+        this.numOfTuples++;
     }
 
     /**
@@ -45,9 +72,52 @@ public class IntHistogram {
      * @return Predicted selectivity of this particular operator and value
      */
     public double estimateSelectivity(Predicate.Op op, int v) {
-
     	// some code goes here
-        return -1.0;
+        int index = getIndex(v);
+        switch (op) {
+        case EQUALS:
+            if (index < 0 || index >= this.buckets.length) {
+                return 0;
+            }
+            return ((double) this.buckets[index]) / this.width / this.numOfTuples;
+        case GREATER_THAN:
+        case GREATER_THAN_OR_EQ: {
+            if (index < 0) {
+                return 1;
+            } else if (index >= this.buckets.length) {
+                return 0;
+            }
+            double rightEnd = this.min + (index+1)*this.width;
+            double count = this.buckets[index] * (rightEnd - v) / this.width;
+            for (int i = index+1; i < this.buckets.length; ++i) {
+                count += this.buckets[i];
+            }
+            return count / this.numOfTuples;
+        }
+        case LESS_THAN:
+        case LESS_THAN_OR_EQ: {
+            if (index < 0) {
+                return 0;
+            } else if (index >= this.buckets.length) {
+                return 1;
+            }
+            double leftEnd = this.min + index*this.width;
+            double count = this.buckets[index] * (v - leftEnd) / this.width;
+            if (op == Predicate.Op.LESS_THAN_OR_EQ && v == leftEnd) {
+                count += this.buckets[index] / this.width;
+            }
+            for (int i = 0; i < index; ++i) {
+                count += this.buckets[i];
+            }
+            return count / this.numOfTuples;
+        }
+        case NOT_EQUALS:
+            if (index < 0 || index >= this.buckets.length) {
+                return 1;
+            }
+            return 1.0 - this.buckets[index] / this.width / this.numOfTuples;
+        }
+        return 0.0;
     }
     
     /**
@@ -61,7 +131,11 @@ public class IntHistogram {
     public double avgSelectivity()
     {
         // some code goes here
-        return 1.0;
+        double selectivity = 0;
+        for (int n : this.buckets) {
+            selectivity += n / this.width / this.numOfTuples;
+        }
+        return selectivity / this.buckets.length;
     }
     
     /**
@@ -69,6 +143,15 @@ public class IntHistogram {
      */
     public String toString() {
         // some code goes here
-        return null;
+        StringBuilder sb = new StringBuilder(10);
+        for (int i = 0; i < this.buckets.length; ++i) {
+            if (i > 0) {
+                sb.append(",");
+            }
+            double left = this.min + this.width*i;
+            double right = this.min + this.width*(i+1);
+            sb.append("[" + Double.toString(left) + "," + Double.toString(right) + "]" + Integer.toString(this.buckets[i]));
+        }
+        return sb.toString();
     }
 }
