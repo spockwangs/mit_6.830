@@ -130,7 +130,7 @@ public class JoinOptimizer {
             // HINT: You may need to use the variable "j" if you implemented
             // a join algorithm that's more complicated than a basic
             // nested-loops join.
-            return -1.0;
+            return cost1 + card1*cost2 + card1*card2;
         }
     }
 
@@ -174,9 +174,34 @@ public class JoinOptimizer {
                                                    String field2PureName, int card1, int card2, boolean t1pkey,
                                                    boolean t2pkey, Map<String, TableStats> stats,
                                                    Map<String, Integer> tableAliasToId) {
-        int card = 1;
-        // some code goes here
-        return card <= 0 ? 1 : card;
+        int tableId1 = tableAliasToId.get(table1Alias);
+        int tableId2 = tableAliasToId.get(table2Alias);
+        String table1Name = Database.getCatalog().getTableName(tableId1);
+        String table2Name = Database.getCatalog().getTableName(tableId2);
+        TableStats stats1 = stats.get(table1Name);
+        TableStats stats2 = stats.get(table2Name);
+        TupleDesc td1 = Database.getCatalog().getTupleDesc(tableId1);
+        TupleDesc td2 = Database.getCatalog().getTupleDesc(tableId2);
+        int field1 = td1.fieldNameToIndex(field1PureName);
+        int field2 = td2.fieldNameToIndex(field2PureName);
+        switch (joinOp) {
+        case EQUALS:
+            if (t1pkey || t2pkey) {
+                return card1 * card2 / Math.max(card1, card2);
+            }
+            return card1 * card2 / 10;
+        case NOT_EQUALS:
+            if (t1pkey || t2pkey) {
+                return card1 * card2 - card1*card2/Math.max(card1, card2);
+            }
+            return card1 * card2 * 9 / 10;
+        case LESS_THAN:
+        case LESS_THAN_OR_EQ:
+        case GREATER_THAN:
+        case GREATER_THAN_OR_EQ:
+        default:
+            return card1 * card2 / 3;
+        }
     }
 
     /**

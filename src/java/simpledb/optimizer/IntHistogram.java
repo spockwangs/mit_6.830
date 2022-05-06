@@ -131,11 +131,7 @@ public class IntHistogram {
     public double avgSelectivity()
     {
         // some code goes here
-        double selectivity = 0;
-        for (int n : this.buckets) {
-            selectivity += n / this.width / this.numOfTuples;
-        }
-        return selectivity / this.buckets.length;
+        return 1.0 / (this.width * this.buckets.length);
     }
     
     /**
