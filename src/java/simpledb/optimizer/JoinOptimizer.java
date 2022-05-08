@@ -124,13 +124,13 @@ public class JoinOptimizer {
         if (j instanceof LogicalSubplanJoinNode) {
             // A LogicalSubplanJoinNode represents a subquery.
             // You do not need to implement proper support for these for Lab 3.
-            return card1 + cost1 + cost2;
+            return (card1 + cost1 + cost2);
         } else {
             // Insert your code here.
             // HINT: You may need to use the variable "j" if you implemented
             // a join algorithm that's more complicated than a basic
             // nested-loops join.
-            return cost1 + card1*cost2 + card1*card2;
+            return (cost1 + card1*cost2 + ((double) card1)*card2);
         }
     }
 
@@ -187,12 +187,12 @@ public class JoinOptimizer {
         switch (joinOp) {
         case EQUALS:
             if (t1pkey || t2pkey) {
-                return card1 * card2 / Math.max(card1, card2);
+                return Math.min(card1, card2);
             }
-            return card1 * card2 / 10;
+            return card1 * card2 / 100;
         case NOT_EQUALS:
             if (t1pkey || t2pkey) {
-                return card1 * card2 - card1*card2/Math.max(card1, card2);
+                return card1 * card2 - Math.min(card1, card2);
             }
             return card1 * card2 * 9 / 10;
         case LESS_THAN:
@@ -260,10 +260,40 @@ public class JoinOptimizer {
             Map<String, TableStats> stats,
             Map<String, Double> filterSelectivities, boolean explain)
             throws ParsingException {
-
         // some code goes here
         //Replace the following
-        return joins;
+        PlanCache pc = new PlanCache();
+        for (int i = 1; i <= this.joins.size(); ++i) {
+            for (Set<LogicalJoinNode> s : this.enumerateSubsets(this.joins, i)) {
+                CostCard bestCc = null;
+                for (LogicalJoinNode a : s) {
+                    double bestCost;
+                    if (bestCc == null) {
+                        bestCost = Double.MAX_VALUE;
+                    } else {
+                        bestCost = bestCc.cost;
+                    }
+                    CostCard cc = this.computeCostAndCardOfSubplan(stats, filterSelectivities, a, s, bestCost, pc);
+                    if (cc != null) {
+                        bestCc = cc;
+                    }
+                }
+                if (bestCc != null) {
+                    pc.addPlan(s, bestCc.cost, bestCc.card, bestCc.plan);
+                }
+            }
+        }
+
+        Set<LogicalJoinNode> s = new HashSet<>(this.joins);
+        List<LogicalJoinNode> js = pc.getOrder(s);
+        if (explain) {
+            printJoins(js, pc, stats, filterSelectivities);
+            try {
+                Thread.sleep(1000*1000);
+            } catch (InterruptedException e) {
+            }
+        }
+        return js;
     }
 
     // ===================== Private Methods =================================

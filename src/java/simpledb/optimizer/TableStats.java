@@ -85,9 +85,9 @@ public class TableStats {
     
     // Map field id => histogram
     private Histogram[] fieldToHistogram;
-    private int numOfTuples;
-    private int numOfPages;
-    private int ioCostPerPage;
+    private int numOfTuples = 0;
+    private int numOfPages = 0;
+    private int ioCostPerPage = 0;
     
     /**
      * Create a new TableStats object, that keeps track of statistics on each
@@ -162,6 +162,9 @@ public class TableStats {
             }
             it.close();
             this.numOfPages = td.getSize() * this.numOfTuples / Database.getBufferPool().getPageSize();
+            if (this.numOfPages == 0) {
+                this.numOfPages = 1;
+            }
         } catch (DbException | TransactionAbortedException e) {
             e.printStackTrace();
         }
@@ -181,7 +184,7 @@ public class TableStats {
      */
     public double estimateScanCost() {
         // some code goes here
-        return this.numOfPages * this.ioCostPerPage;
+        return ((double) this.numOfPages) * this.ioCostPerPage / 1E3;
     }
 
     /**
