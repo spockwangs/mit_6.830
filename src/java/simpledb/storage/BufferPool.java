@@ -39,6 +39,8 @@ public class BufferPool {
     // Map PageId => Page
     private ConcurrentHashMap<PageId, Page> pageMap = new ConcurrentHashMap<PageId, Page>();
 
+    private LockManager lockManager = new LockManager();
+    
     /**
      * Creates a BufferPool that caches up to numPages pages.
      *
@@ -89,8 +91,10 @@ public class BufferPool {
             DbFile dbFile = Database.getCatalog().getDatabaseFile(pid.getTableId());
             page = dbFile.readPage(pid);
             this.pageMap.put(pid, page);
+            this.lockManager.lockPage(tid, pid, perm);
             return page;
         }
+        this.lockManager.lockPage(tid, pid, perm);
         return page;
     }
 
@@ -106,6 +110,7 @@ public class BufferPool {
     public  void unsafeReleasePage(TransactionId tid, PageId pid) {
         // some code goes here
         // not necessary for lab1|lab2
+        this.lockManager.unlockPage(tid, pid);
     }
 
     /**
@@ -116,13 +121,14 @@ public class BufferPool {
     public void transactionComplete(TransactionId tid) {
         // some code goes here
         // not necessary for lab1|lab2
+        this.lockManager.unlockPages(tid);
     }
 
     /** Return true if the specified transaction has a lock on the specified page */
     public boolean holdsLock(TransactionId tid, PageId p) {
         // some code goes here
         // not necessary for lab1|lab2
-        return false;
+        return this.lockManager.isLocked(tid, p);
     }
 
     /**
@@ -135,6 +141,16 @@ public class BufferPool {
     public void transactionComplete(TransactionId tid, boolean commit) {
         // some code goes here
         // not necessary for lab1|lab2
+        if (commit) {
+            flushPages(tid);
+        } else {
+            for (Page page : this.pageMap.values()) {
+                if (page.isDirty().equals(tid)) {
+                    discardPage(page.getId());
+                }
+            }
+        }
+        this.lockManager.unlockPages(tid);
     }
 
     /**
