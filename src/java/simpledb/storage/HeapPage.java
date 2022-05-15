@@ -29,6 +29,8 @@ public class HeapPage implements Page {
     private final Byte oldDataLock= (byte) 0;
 
     private TransactionId lastDirtyTxid = null;
+
+    private int fixCount = 0;
     
     /**
      * Create a HeapPage from a set of bytes of data read from disk.
@@ -388,5 +390,20 @@ public class HeapPage implements Page {
         };
     }
 
+    public int getFixCount() {
+        return this.fixCount;
+    }
+    
+    public void setFixCount(int a) {
+        this.fixCount = a;
+    }
+    
+    public void incFixCount() {
+        this.fixCount++;
+    }
+    
+    public void decFixCount() {
+        this.fixCount--;
+    }
 }
 

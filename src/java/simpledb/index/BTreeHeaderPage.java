@@ -312,4 +312,21 @@ public class BTreeHeaderPage implements Page {
 		}
 		return -1;
 	}
+
+    public int getFixCount() {
+		throw new UnsupportedOperationException();
+    }
+
+    public void setFixCount(int a) {
+        throw new UnsupportedOperationException();
+    }
+
+    public void incFixCount() {
+        throw new UnsupportedOperationException();
+    }
+    
+    public void decFixCount() {
+        throw new UnsupportedOperationException();
+    }
+
 }

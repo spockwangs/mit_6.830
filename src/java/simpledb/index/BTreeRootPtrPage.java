@@ -224,5 +224,21 @@ public class BTreeRootPtrPage implements Page {
 		return PAGE_SIZE;
 	}
 
+    public int getFixCount() {
+		throw new UnsupportedOperationException();
+    }
+
+    public void setFixCount(int a) {
+        throw new UnsupportedOperationException();
+    }
+
+    public void incFixCount() {
+        throw new UnsupportedOperationException();
+    }
+    
+    public void decFixCount() {
+        throw new UnsupportedOperationException();
+    }
+
 }
 

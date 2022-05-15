@@ -58,4 +58,9 @@ public interface Page {
      * copy current content to the before image.
      */
     void setBeforeImage();
+
+    int getFixCount();
+    void setFixCount(int a);
+    void incFixCount();
+    void decFixCount();
 }

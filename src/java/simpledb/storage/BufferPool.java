@@ -103,12 +103,19 @@ public class BufferPool {
         }
         Page page = this.pageMap.get(pid);
         if (page == null) {
-            // while (this.pageMap.size() >= this.maxNumPages) {
-            //     evictPage();
-            // }
+            while (this.pageMap.size() >= this.maxNumPages) {
+                 evictPage();
+            }
             DbFile dbFile = Database.getCatalog().getDatabaseFile(pid.getTableId());
             page = dbFile.readPage(pid);
+            page.setFixCount(1);
             this.pageMap.put(pid, page);
+        } else {
+            if (perm == Permissions.READ_ONLY) {
+                page.incFixCount();
+            } else {
+                page.setFixCount(1);
+            }
         }
         return page;
     }
@@ -305,9 +312,12 @@ public class BufferPool {
         try {
             TransactionId tid = new TransactionId();
             for (PageId pid : this.pageMap.keySet()) {
-                if (this.lockManager.tryLockPage(tid, pid, LockManager.LockMode.EXCLUSIVE)) {
-                    this.flushPage(pid);
-                    this.discardPage(pid);
+                if (this.lockManager.tryLockPage(tid, pid, LockManager.LockMode.SHARED)) {
+                    Page page = this.pageMap.get(pid);
+                    if (page.isDirty() == null && page.getFixCount() <= 0) {
+                        this.flushPage(pid);
+                        this.discardPage(pid);
+                    }
                     this.lockManager.unlockPage(tid, pid);
                     return;
                 }

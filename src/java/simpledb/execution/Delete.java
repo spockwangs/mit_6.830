@@ -47,6 +47,7 @@ public class Delete extends Operator {
 
     public void open() throws DbException, TransactionAbortedException {
         // some code goes here
+        this.child.open();
         int count = 0;
         while (this.child.hasNext()) {
             Tuple t = this.child.next();
