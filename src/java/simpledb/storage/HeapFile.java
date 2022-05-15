@@ -6,7 +6,7 @@ import simpledb.common.Debug;
 import simpledb.common.Permissions;
 import simpledb.transaction.TransactionAbortedException;
 import simpledb.transaction.TransactionId;
-
+import java.util.concurrent.locks.*;
 import java.io.*;
 import java.util.*;
 
@@ -24,6 +24,7 @@ public class HeapFile implements DbFile {
 
     private final File file;
     private final TupleDesc td;
+    private final ReentrantLock appendLock = new ReentrantLock();
     
     /**
      * Constructs a heap file backed by the specified file.
@@ -118,32 +119,47 @@ public class HeapFile implements DbFile {
 
     // see DbFile.java for javadocs
     public List<Page> insertTuple(TransactionId tid, Tuple t)
-            throws DbException, IOException, TransactionAbortedException {
+        throws DbException, IOException, TransactionAbortedException {
         // some code goes here
         // not necessary for lab1
         ArrayList<Page> result = new ArrayList<Page>();
-        for (int i = 0; i < this.numPages(); ++i) {
-            HeapPage page = (HeapPage) Database.getBufferPool().getPage(tid,
-                                                                        new HeapPageId(this.getId(), i),
-                                                                        Permissions.READ_WRITE);
+        BufferPool bp = Database.getBufferPool();
+        for (;;) {
+            int numOfPages = this.numPages();
+            for (int i = 0; i < numOfPages; ++i) {
+                PageId pid = new HeapPageId(this.getId(), i);
+                HeapPage page = (HeapPage) bp.getPage(tid, pid, Permissions.READ_ONLY);
+                if (page.getNumEmptySlots() > 0) {
+                    bp.getPage(tid, pid, Permissions.READ_WRITE);
+                    page.insertTuple(t);
+                    result.add(page);
+                    return result;
+                } else {
+                    bp.unsafeReleasePage(tid, pid);
+                }
+            }
+
+            // Append an empty page.
+            this.appendLock.lock();
+            try {
+                if (numOfPages == this.numPages()) {
+                    BufferedOutputStream bw = new BufferedOutputStream(new FileOutputStream(this.file, true));
+                    byte[] emptyData = HeapPage.createEmptyPageData();
+                    bw.write(emptyData);
+                    bw.close();
+                }
+            } finally {
+                this.appendLock.unlock();
+            }
+            PageId pid = new HeapPageId(this.getId(), this.numPages()-1);
+            HeapPage page = (HeapPage) Database.getBufferPool().getPage(tid, pid, Permissions.READ_WRITE);
             if (page.getNumEmptySlots() > 0) {
                 page.insertTuple(t);
                 result.add(page);
                 return result;
             }
+            bp.unsafeReleasePage(tid, pid);
         }
-
-        // Append an empty page.
-        BufferedOutputStream bw = new BufferedOutputStream(new FileOutputStream(this.file, true));
-        byte[] emptyData = HeapPage.createEmptyPageData();
-        bw.write(emptyData);
-        bw.close();
-        HeapPage page = (HeapPage) Database.getBufferPool().getPage(tid,
-                                                                    new HeapPageId(this.getId(), this.numPages()-1),
-                                                                    Permissions.READ_WRITE);
-        page.insertTuple(t);
-        result.add(page);
-        return result;
     }
 
     // see DbFile.java for javadocs
