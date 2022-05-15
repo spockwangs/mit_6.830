@@ -152,7 +152,7 @@ public class HeapFile implements DbFile {
                 this.appendLock.unlock();
             }
             PageId pid = new HeapPageId(this.getId(), this.numPages()-1);
-            HeapPage page = (HeapPage) Database.getBufferPool().getPage(tid, pid, Permissions.READ_WRITE);
+            HeapPage page = (HeapPage) bp.getPage(tid, pid, Permissions.READ_WRITE);
             if (page.getNumEmptySlots() > 0) {
                 page.insertTuple(t);
                 result.add(page);

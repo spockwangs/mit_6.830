@@ -41,12 +41,20 @@ public class LockManager {
     }
     
     private ConcurrentHashMap<PageId, LockQueue> lockTable = new ConcurrentHashMap<>();
-    private ConcurrentHashMap<TransactionId, Set<PageId>> txnTable = new ConcurrentHashMap<>();
+    private ConcurrentHashMap<TransactionId, HashSet<PageId>> txnTable = new ConcurrentHashMap<>();
 
     public LockManager() {
     }
 
     public void lockPage(TransactionId tid, PageId pid, LockMode mode) {
+        lockPage(tid, pid, mode, true);
+    }
+
+    public boolean tryLockPage(TransactionId tid, PageId pid, LockMode mode) {
+        return lockPage(tid, pid, mode, false);
+    }
+    
+    private boolean lockPage(TransactionId tid, PageId pid, LockMode mode, boolean wait) {
         LockQueue lockQueue = lockTable.computeIfAbsent(pid, (key) -> new LockQueue());
         lockQueue.lock.lock();
         try {
@@ -79,7 +87,11 @@ public class LockManager {
                     lockReq.status = LockStatus.GRANTED;
                 }
                 while (lockReq.status != LockStatus.GRANTED) {
-                    lockReq.notify.awaitUninterruptibly();
+                    if (wait) {
+                        lockReq.notify.awaitUninterruptibly();
+                    } else {
+                        return false;
+                    }
                 }
             } else {
                 // Conversion case
@@ -103,14 +115,21 @@ public class LockManager {
                     break;
                 }
                 while (lockReq.status != LockStatus.GRANTED) {
-                    lockReq.notify.awaitUninterruptibly();
+                    if (wait) {
+                        lockReq.notify.awaitUninterruptibly();
+                    } else {
+                        return false;
+                    }
                 }
             }
         } finally {
             lockQueue.lock.unlock();
         }
         Set<PageId> list = txnTable.computeIfAbsent(tid, (key) -> new HashSet<PageId>());
-        list.add(pid);
+        synchronized(list) {
+            list.add(pid);
+        }
+        return true;
     }
 
     public void unlockPage(TransactionId tid, PageId pid) {
@@ -169,26 +188,34 @@ public class LockManager {
         }
         Set<PageId> set = txnTable.get(tid);
         if (set != null) {
-            set.remove(pid);
+            synchronized(set) {
+                set.remove(pid);
+            }
         }
     }
 
     public void unlockPages(TransactionId tid) {
-        Set<PageId> set = txnTable.get(tid);
+        HashSet<PageId> set = txnTable.get(tid);
         if (set == null) {
             return;
+        }
+        synchronized(set) {
+            set = (HashSet) (set.clone());
         }
         for (PageId pid : set) {
             unlockPage(tid, pid);
         }
+        txnTable.remove(tid);
     }
 
     public boolean isLocked(TransactionId tid, PageId pid) {
         Set<PageId> set = txnTable.get(tid);
-        if (set == null || !set.contains(pid)) {
+        if (set == null) {
             return false;
         }
-        return true;
+        synchronized(set) {
+            return set.contains(pid);
+        }
     }
 
     private LockMode maxMode(LockMode a, LockMode b) {
