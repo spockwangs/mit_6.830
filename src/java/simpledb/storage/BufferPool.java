@@ -83,6 +83,12 @@ public class BufferPool {
     public  Page getPage(TransactionId tid, PageId pid, Permissions perm)
         throws TransactionAbortedException, DbException {
         // some code goes here
+        LockManager.LockMode mode;
+        if (perm == Permissions.READ_ONLY) {
+            mode = LockManager.LockMode.SHARED;
+        } else {
+            mode = LockManager.LockMode.EXCLUSIVE;
+        }
         Page page = this.pageMap.get(pid);
         if (page == null) {
             while (this.pageMap.size() >= this.maxNumPages) {
@@ -91,10 +97,8 @@ public class BufferPool {
             DbFile dbFile = Database.getCatalog().getDatabaseFile(pid.getTableId());
             page = dbFile.readPage(pid);
             this.pageMap.put(pid, page);
-            this.lockManager.lockPage(tid, pid, perm);
-            return page;
         }
-        this.lockManager.lockPage(tid, pid, perm);
+        this.lockManager.lockPage(tid, pid, mode);
         return page;
     }
 
@@ -141,16 +145,20 @@ public class BufferPool {
     public void transactionComplete(TransactionId tid, boolean commit) {
         // some code goes here
         // not necessary for lab1|lab2
-        if (commit) {
-            flushPages(tid);
-        } else {
-            for (Page page : this.pageMap.values()) {
-                if (page.isDirty().equals(tid)) {
-                    discardPage(page.getId());
+        try {
+            if (commit) {
+                flushPages(tid);
+            } else {
+                for (Page page : this.pageMap.values()) {
+                    if (tid.equals(page.isDirty())) {
+                        discardPage(page.getId());
+                    }
                 }
             }
+            this.lockManager.unlockPages(tid);
+        } catch (IOException e) {
+            e.printStackTrace();
         }
-        this.lockManager.unlockPages(tid);
     }
 
     /**

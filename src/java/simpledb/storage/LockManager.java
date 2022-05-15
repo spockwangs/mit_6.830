@@ -1,7 +1,14 @@
 package simpledb.storage;
 
 import simpledb.common.Database;
-import java.util.concurrent.locks;
+import simpledb.transaction.TransactionId;
+
+import java.util.concurrent.locks.*;
+import java.util.concurrent.*;
+import java.util.Set;
+import java.util.HashSet;
+import java.util.ArrayList;
+import java.util.List;
 
 public class LockManager {
 
@@ -19,6 +26,7 @@ public class LockManager {
         public PageId pid;
         public LockStatus status = LockStatus.WAITING;
         public LockMode convertMode;
+        public Condition notify;
 
         public LockRequest(TransactionId tid, LockMode mode, PageId pid) {
             this.tid = tid;
@@ -30,73 +38,78 @@ public class LockManager {
     private class LockQueue {
         public List<LockRequest> lockRequests = new ArrayList<LockRequest>();
         public final Lock lock = new ReentrantLock();
-        public final Condition notify = lock.newCondition();
     }
     
     private ConcurrentHashMap<PageId, LockQueue> lockTable = new ConcurrentHashMap<>();
     private ConcurrentHashMap<TransactionId, Set<PageId>> txnTable = new ConcurrentHashMap<>();
 
-    LockManager() {
+    public LockManager() {
     }
 
     public void lockPage(TransactionId tid, PageId pid, LockMode mode) {
-        LockRequest lockReq = new LockRequest(tid, mode, pid);
         LockQueue lockQueue = lockTable.computeIfAbsent(pid, (key) -> new LockQueue());
         lockQueue.lock.lock();
         try {
-            for (;;) {
-                LockMode grantedMode = null;
-                boolean allGranted = true;
-                for (LockRequest lr : lockQueue.lockRequests) {
-                    if (lockReq.tid.equals(lr.tid)) {
-                        if (lockReq.mode == EXCLUSIVE && lr.mode == SHARED) {
-                            if (lr.status = GRANTED) {
-                                lr.convertMode = lockReq.mode;
-                                lr.status = CONVERTING;
-                            } else {
-                                // lr.status == WAITING
-                                lr.mode = lockReq.mode;
-                            }
-                        }
-                        switch (lr.status) {
-                        case WAITING:
-                            if (isCompatible(grantedMode, lr.mode)) {
-                                lr.status = GRANTED;
-                            }
-                            break;
-                        case CONVERTING:
-                            if (isCompatible(grantedMode, lr.convertMode)) {
-                                lr.mode = lr.convertMode;
-                                lr.convertMode = null;
-                                lr.status = GRANTED;
-                            }
-                            break;
-                        }
-                        if (lr.status == GRANTED) {
-                            return;
-                        }
+            LockMode maxGrantedMode = null;
+            boolean waiting = false;
+            LockRequest lockReq = null;
+            for (LockRequest lr : lockQueue.lockRequests) {
+                if (tid.equals(lr.tid)) {
+                    lockReq = lr;
+                } else {
+                    switch (lr.status) {
+                    case WAITING:
+                        waiting = true;
                         break;
-                    } else {
-                        if (lr.status == GRANTED || lr.status == CONVERTING) {
-                            grantedMode = maxMode(grantedMode, lr.mode);
-                        } else {
-                            allGranted = false;
-                            break;
-                        }
+                    case GRANTED:
+                        maxGrantedMode = maxMode(maxGrantedMode, lr.mode);
+                        break;
+                    case CONVERTING:
+                        waiting = true;
+                        maxGrantedMode = maxMode(maxGrantedMode, lr.mode);
+                        break;
                     }
                 }
-                if (allGranted && isCompatible(grantedMode, lockReq.mode)) {
-                    lockReq.status = GRANTED;
-                    lockQueue.add(lockReq);
-                    return;
+            }
+            if (lockReq == null) {
+                lockReq = new LockRequest(tid, mode, pid);
+                lockReq.notify = lockQueue.lock.newCondition();
+                lockQueue.lockRequests.add(lockReq);
+                if (!waiting && isCompatible(maxGrantedMode, lockReq.mode)) {
+                    lockReq.status = LockStatus.GRANTED;
                 }
-                lockQueue.append(lockReq);
-                lockQueue.wait();
+                while (lockReq.status != LockStatus.GRANTED) {
+                    lockReq.notify.awaitUninterruptibly();
+                }
+            } else {
+                // Conversion case
+                if (mode == LockMode.EXCLUSIVE && lockReq.mode == LockMode.SHARED) {
+                    if (lockReq.status == LockStatus.GRANTED) {
+                        lockReq.convertMode = mode;
+                        lockReq.status = LockStatus.CONVERTING;
+                    } else {
+                        lockReq.mode = mode;
+                    }
+                }
+                switch (lockReq.status) {
+                case WAITING:
+                    throw new IllegalArgumentException("bad lock status");
+                case CONVERTING:
+                    if (isCompatible(lockReq.convertMode, maxGrantedMode)) {
+                        lockReq.status = LockStatus.GRANTED;
+                        lockReq.mode = lockReq.convertMode;
+                        lockReq.convertMode = null;
+                    }
+                    break;
+                }
+                while (lockReq.status != LockStatus.GRANTED) {
+                    lockReq.notify.awaitUninterruptibly();
+                }
             }
         } finally {
             lockQueue.lock.unlock();
         }
-        List<PageId> list = txnTable.computeIfAbsent(tid, (key) -> new ArrayList<PageId>());
+        Set<PageId> list = txnTable.computeIfAbsent(tid, (key) -> new HashSet<PageId>());
         list.add(pid);
     }
 
@@ -107,16 +120,50 @@ public class LockManager {
         }
         lockQueue.lock.lock();
         try {
+            LockRequest lockReq = null;
+            LockMode maxGrantedMode = null;
+            boolean conversionWaiting = false;
             for (LockRequest lr : lockQueue.lockRequests) {
                 if (tid.equals(lr.tid)) {
-                    if (lr.status != GRANTED) {
+                    if (lr.status != LockStatus.GRANTED) {
                         throw new IllegalArgumentException("can't unlock ungranted lock");
                     }
-                    lockQueue.remove(lr);
-                    lockQueue.notify.signal();
-                    return;
+                    lockReq = lr;
+                } else if (lr.status == LockStatus.GRANTED) {
+                    maxGrantedMode = maxMode(maxGrantedMode, lr.mode);
+                } else if (lr.status == LockStatus.WAITING) {
+                    if (!conversionWaiting && isCompatible(lr.mode, maxGrantedMode)) {
+                        lr.status = LockStatus.GRANTED;
+                        lr.notify.signal();
+                        maxGrantedMode = maxMode(maxGrantedMode, lr.mode);
+                    } else {
+                        break;
+                    }
+                } else {
+                    // Conversion case
+                    LockMode maxMode = null;
+                    for (LockRequest l : lockQueue.lockRequests) {
+                        if (tid.equals(l.tid) || l == lr) {
+                            continue;
+                        }
+                        if (l.status == LockStatus.GRANTED || l.status == LockStatus.CONVERTING) {
+                            maxMode = maxMode(maxMode, l.mode);
+                        } else {
+                            break;
+                        }
+                    }
+                    if (isCompatible(lr.convertMode, maxMode)) {
+                        lr.status = LockStatus.GRANTED;
+                        lr.mode = lr.convertMode;
+                        lr.convertMode = null;
+                        lr.notify.signal();
+                        maxGrantedMode = maxMode(maxGrantedMode, lr.mode);
+                    } else {
+                        conversionWaiting = true;
+                    }
                 }
             }
+            lockQueue.lockRequests.remove(lockReq);
         } finally {
             lockQueue.lock.unlock();
         }
@@ -126,7 +173,7 @@ public class LockManager {
         }
     }
 
-    void unlockPages(TransactionId tid) {
+    public void unlockPages(TransactionId tid) {
         Set<PageId> set = txnTable.get(tid);
         if (set == null) {
             return;
@@ -136,25 +183,12 @@ public class LockManager {
         }
     }
 
-    bool isLocked(TransactionId tid, PageId pid) {
-        LockQueue lockQueue = lockTable.get(pid);
-        if (lockQueue == null) {
+    public boolean isLocked(TransactionId tid, PageId pid) {
+        Set<PageId> set = txnTable.get(tid);
+        if (set == null || !set.contains(pid)) {
             return false;
         }
-        lockQueue.lock.lock();
-        try {
-            for (LockRequest lr : lockQueue.lockRequests) {
-                if (tid.equals(lr.tid)) {
-                    if (lr.status == GRANTED) {
-                        return true;
-                    }
-                    return false;
-                }
-            }
-            return false;
-        } finally {
-            lockQueue.lock.unlock();
-        }
+        return true;
     }
 
     private LockMode maxMode(LockMode a, LockMode b) {
@@ -164,17 +198,20 @@ public class LockManager {
         if (b == null) {
             return a;
         }
-        if (a == SHARED) {
+        if (a == LockMode.SHARED) {
             return b;
         }
-        if (b == SHARED) {
+        if (b == LockMode.SHARED) {
             return a;
         }
         return a;
     }
 
     private boolean isCompatible(LockMode a, LockMode b) {
-        if (a == EXCLUSIVE || b == EXCLUSIVE) {
+        if (a == null || b == null) {
+            return true;
+        }
+        if (a == LockMode.EXCLUSIVE || b == LockMode.EXCLUSIVE) {
             return false;
         }
         return true;
