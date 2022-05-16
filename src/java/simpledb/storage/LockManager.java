@@ -40,8 +40,13 @@ public class LockManager {
         public final Lock lock = new ReentrantLock();
     }
     
+    private class TransactionControlBlock {
+        public HashSet<PageId> lockSet = new HashSet<>();
+        public HashSet<TransactionControlBlock> waitFor = new HashSet<TransactionControlBlock>();
+    }
+    
     private ConcurrentHashMap<PageId, LockQueue> lockTable = new ConcurrentHashMap<>();
-    private ConcurrentHashMap<TransactionId, HashSet<PageId>> txnTable = new ConcurrentHashMap<>();
+    private ConcurrentHashMap<TransactionId, TransactionControlBlock> txnTable = new ConcurrentHashMap<>();
 
     public LockManager() {
     }
@@ -122,9 +127,9 @@ public class LockManager {
                     }
                 }
             }
-            Set<PageId> list = txnTable.computeIfAbsent(tid, (key) -> new HashSet<PageId>());
-            synchronized(list) {
-                list.add(pid);
+            TransactionControlBlock tcb = txnTable.computeIfAbsent(tid, (key) -> new TransactionControlBlock());
+            synchronized(tcb) {
+                tcb.lockSet.add(pid);
             }
         } finally {
             lockQueue.lock.unlock();
@@ -183,11 +188,9 @@ public class LockManager {
                 }
             }
             lockQueue.lockRequests.remove(lockReq);
-            Set<PageId> set = txnTable.get(tid);
-            if (set != null) {
-                synchronized(set) {
-                    set.remove(pid);
-                }
+            TransactionControlBlock tcb = txnTable.get(tid);
+            synchronized(tcb) {
+                tcb.lockSet.remove(pid);
             }
         } finally {
             lockQueue.lock.unlock();
@@ -195,12 +198,13 @@ public class LockManager {
     }
 
     public void unlockPages(TransactionId tid) {
-        HashSet<PageId> set = txnTable.get(tid);
-        if (set == null) {
+        TransactionControlBlock tcb = txnTable.get(tid);
+        if (tcb == null) {
             return;
         }
-        synchronized(set) {
-            set = (HashSet) (set.clone());
+        HashSet<PageId> set;
+        synchronized(tcb) {
+            set = (HashSet) (tcb.lockSet.clone());
         }
         for (PageId pid : set) {
             unlockPage(tid, pid);
@@ -209,12 +213,12 @@ public class LockManager {
     }
 
     public boolean isLocked(TransactionId tid, PageId pid) {
-        Set<PageId> set = txnTable.get(tid);
-        if (set == null) {
+        TransactionControlBlock tcb = txnTable.get(tid);
+        if (tcb == null) {
             return false;
         }
-        synchronized(set) {
-            return set.contains(pid);
+        synchronized(tcb) {
+            return tcb.lockSet.contains(pid);
         }
     }
 
