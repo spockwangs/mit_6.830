@@ -56,7 +56,22 @@ public class LockManager {
     private ConcurrentHashMap<PageId, LockQueue> lockTable = new ConcurrentHashMap<>();
     private ConcurrentHashMap<TransactionId, TransactionControlBlock> txnTable = new ConcurrentHashMap<>();
 
+    private Thread t;
+    
     public LockManager() {
+        this.t = new Thread() {
+                public void run() {
+                    for (;;) {
+                        try {
+                            Thread.sleep(1000);
+                            detectDeadlock();
+                        } catch (InterruptedException e) {
+                            e.printStackTrace();
+                        }
+                    }
+                }
+            };
+        this.t.start();
     }
 
     public void lockPage(TransactionId tid, PageId pid, LockMode mode) throws TransactionAbortedException {
@@ -330,6 +345,7 @@ public class LockManager {
     }
 
     private void detectDeadlock() {
+        System.out.println("detectDeadlock");
         for (TransactionControlBlock tcb : txnTable.values()) {
             synchronized(tcb) {
                 tcb.cycle = null;
@@ -341,6 +357,7 @@ public class LockManager {
     }
 
     private void visit(TransactionControlBlock me) {
+        System.out.println("visiting " + me.tid.getId());
         HashSet<TransactionId> visited = new HashSet<>();
         for (;;) {
             boolean hasDeadlock = false;
@@ -362,10 +379,9 @@ public class LockManager {
                         if (lr.tid.equals(me.tid)) {
                             lr.status = LockStatus.DENIED;
                             lr.notify.signal();
-                            break;
+                            return;
                         }
                     }
-                    return;
                 }
 
                 synchronized(me) {
