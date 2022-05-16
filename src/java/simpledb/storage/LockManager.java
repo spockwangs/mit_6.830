@@ -21,9 +21,9 @@ public class LockManager {
     }
     
     private class LockRequest {
-        public TransactionId tid;
+        public final TransactionId tid;
         public LockMode mode;
-        public PageId pid;
+        public final PageId pid;
         public LockStatus status = LockStatus.WAITING;
         public LockMode convertMode;
         public Condition notify;
@@ -41,8 +41,7 @@ public class LockManager {
     }
     
     private class TransactionControlBlock {
-        public HashSet<PageId> lockSet = new HashSet<>();
-        public HashSet<TransactionControlBlock> waitFor = new HashSet<TransactionControlBlock>();
+        public List<LockRequest> lockRequests = new ArrayList<LockRequest>();
     }
     
     private ConcurrentHashMap<PageId, LockQueue> lockTable = new ConcurrentHashMap<>();
@@ -87,16 +86,26 @@ public class LockManager {
             if (lockReq == null) {
                 lockReq = new LockRequest(tid, mode, pid);
                 lockReq.notify = lockQueue.lock.newCondition();
-                lockQueue.lockRequests.add(lockReq);
                 if (!waiting && isCompatible(maxGrantedMode, lockReq.mode)) {
                     lockReq.status = LockStatus.GRANTED;
                 }
-                while (lockReq.status != LockStatus.GRANTED) {
-                    if (wait) {
-                        lockReq.notify.awaitUninterruptibly();
-                    } else {
-                        return false;
+                if (wait) {
+                    lockQueue.lockRequests.add(lockReq);
+                    TransactionControlBlock tcb = txnTable.computeIfAbsent(tid, (key) -> new TransactionControlBlock());
+                    synchronized(tcb) {
+                        tcb.lockRequests.add(lockReq);
                     }
+                    while (lockReq.status != LockStatus.GRANTED) {
+                        lockReq.notify.awaitUninterruptibly();
+                    }
+                } else if (lockReq.status == LockStatus.GRANTED) {
+                    lockQueue.lockRequests.add(lockReq);                        
+                    TransactionControlBlock tcb = txnTable.computeIfAbsent(tid, (key) -> new TransactionControlBlock());
+                    synchronized(tcb) {
+                        tcb.lockRequests.add(lockReq);
+                    }
+                } else {
+                    return false;
                 }
             } else {
                 // Conversion case
@@ -126,10 +135,6 @@ public class LockManager {
                         return false;
                     }
                 }
-            }
-            TransactionControlBlock tcb = txnTable.computeIfAbsent(tid, (key) -> new TransactionControlBlock());
-            synchronized(tcb) {
-                tcb.lockSet.add(pid);
             }
         } finally {
             lockQueue.lock.unlock();
@@ -190,7 +195,7 @@ public class LockManager {
             lockQueue.lockRequests.remove(lockReq);
             TransactionControlBlock tcb = txnTable.get(tid);
             synchronized(tcb) {
-                tcb.lockSet.remove(pid);
+                tcb.lockRequests.remove(lockReq);
             }
         } finally {
             lockQueue.lock.unlock();
@@ -202,9 +207,11 @@ public class LockManager {
         if (tcb == null) {
             return;
         }
-        HashSet<PageId> set;
+        HashSet<PageId> set = new HashSet<>();
         synchronized(tcb) {
-            set = (HashSet) (tcb.lockSet.clone());
+            for (LockRequest lr : tcb.lockRequests) {
+                set.add(lr.pid);
+            }
         }
         for (PageId pid : set) {
             unlockPage(tid, pid);
@@ -213,12 +220,24 @@ public class LockManager {
     }
 
     public boolean isLocked(TransactionId tid, PageId pid) {
-        TransactionControlBlock tcb = txnTable.get(tid);
-        if (tcb == null) {
+        LockQueue lockQueue = lockTable.get(pid);
+        if (lockQueue == null) {
             return false;
         }
-        synchronized(tcb) {
-            return tcb.lockSet.contains(pid);
+        lockQueue.lock.lock();
+        try {
+            for (LockRequest lr : lockQueue.lockRequests) {
+                if (lr.tid.equals(tid)) {
+                    if (lr.status == LockStatus.GRANTED || lr.status == LockStatus.CONVERTING) {
+                        return true;
+                    } else {
+                        return false;
+                    }
+                }
+            }
+            return false;
+        } finally {
+            lockQueue.lock.unlock();
         }
     }
 
@@ -247,4 +266,37 @@ public class LockManager {
         }
         return true;
     }
+
+    /*
+    private void detectDeadlock() {
+        HashMap<TransactionId, HashSet<TransactionId>> graph = new HashMap<>();
+        for (Map.Entry<PageId, LockQueue> e : lockTable) {
+            LockQueue lockQueue = e.getValue();
+            lockQueue.lock.lock();
+            try {
+                HashSet<TransactionId> waited = new HashSet<>();
+                HashSet<TransactionId> waiters = new HashSet<>();
+                for (LockRequest lr : lockQueue.lockRequests) {
+                    if (lr.status == LockMode.GRANTED) {
+                        waited.add(lr.tid);
+                    } else if (lr.status == LockMode.CONVERTING || lr.status == LockMode.WAITING) {
+                        waiters.add(lr.tid);
+                    }
+                }
+                for (TransactionId tid : waiters) {
+                    HashSet<TransactionId> set = graph.computeIfAbsent(tid, (key) -> new HashSet<TransactionId>());
+                    for (TransactionId tid2 : waited) {
+                        set.add(tid2);
+                    }
+                }
+            } finally {
+                lockQueue.lock.unlock();
+            }
+        }
+
+        List<TransactionId> cycle = detectCycle(graph);
+        if (cycle != null) {
+        }
+        }*/
+        
 }
