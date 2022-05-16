@@ -122,12 +122,12 @@ public class LockManager {
                     }
                 }
             }
+            Set<PageId> list = txnTable.computeIfAbsent(tid, (key) -> new HashSet<PageId>());
+            synchronized(list) {
+                list.add(pid);
+            }
         } finally {
             lockQueue.lock.unlock();
-        }
-        Set<PageId> list = txnTable.computeIfAbsent(tid, (key) -> new HashSet<PageId>());
-        synchronized(list) {
-            list.add(pid);
         }
         return true;
     }
@@ -183,14 +183,14 @@ public class LockManager {
                 }
             }
             lockQueue.lockRequests.remove(lockReq);
+            Set<PageId> set = txnTable.get(tid);
+            if (set != null) {
+                synchronized(set) {
+                    set.remove(pid);
+                }
+            }
         } finally {
             lockQueue.lock.unlock();
-        }
-        Set<PageId> set = txnTable.get(tid);
-        if (set != null) {
-            synchronized(set) {
-                set.remove(pid);
-            }
         }
     }
 
