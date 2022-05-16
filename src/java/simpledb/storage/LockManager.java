@@ -27,6 +27,7 @@ public class LockManager {
         public LockStatus status = LockStatus.WAITING;
         public LockMode convertMode;
         public Condition notify;
+        public LockQueue head;
 
         public LockRequest(TransactionId tid, LockMode mode, PageId pid) {
             this.tid = tid;
@@ -42,7 +43,7 @@ public class LockManager {
     
     private class TransactionControlBlock {
         public List<LockRequest> lockRequests = new ArrayList<LockRequest>();
-        public LockRequest wait = null;
+        public LockRequest wait; // I'm waiting for which lock
         public TransactionControlBlock cycle = null;
     }
     
@@ -87,6 +88,7 @@ public class LockManager {
             }
             if (lockReq == null) {
                 lockReq = new LockRequest(tid, mode, pid);
+                lockReq.head = lockQueue;
                 lockReq.notify = lockQueue.lock.newCondition();
                 if (!waiting && isCompatible(maxGrantedMode, lockReq.mode)) {
                     lockReq.status = LockStatus.GRANTED;
@@ -220,6 +222,8 @@ public class LockManager {
                     }
                 }
             }
+            lockReq.head = null;
+            lockReq.notify = null;
             lockQueue.lockRequests.remove(lockReq);
             TransactionControlBlock tcb = txnTable.get(tid);
             synchronized(tcb) {
