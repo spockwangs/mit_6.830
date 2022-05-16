@@ -42,6 +42,8 @@ public class LockManager {
     
     private class TransactionControlBlock {
         public List<LockRequest> lockRequests = new ArrayList<LockRequest>();
+        public LockRequest wait = null;
+        public TransactionControlBlock cycle = null;
     }
     
     private ConcurrentHashMap<PageId, LockQueue> lockTable = new ConcurrentHashMap<>();
@@ -93,15 +95,24 @@ public class LockManager {
                     lockQueue.lockRequests.add(lockReq);
                     TransactionControlBlock tcb = txnTable.computeIfAbsent(tid, (key) -> new TransactionControlBlock());
                     synchronized(tcb) {
+                        if (lockReq.status != LockStatus.GRANTED) {
+                            tcb.wait = lockReq;
+                        } else {
+                            tcb.wait = null;
+                        }
                         tcb.lockRequests.add(lockReq);
                     }
                     while (lockReq.status != LockStatus.GRANTED) {
                         lockReq.notify.awaitUninterruptibly();
                     }
+                    synchronized(tcb) {
+                        tcb.wait = null;
+                    }
                 } else if (lockReq.status == LockStatus.GRANTED) {
                     lockQueue.lockRequests.add(lockReq);                        
                     TransactionControlBlock tcb = txnTable.computeIfAbsent(tid, (key) -> new TransactionControlBlock());
                     synchronized(tcb) {
+                        tcb.wait = null;
                         tcb.lockRequests.add(lockReq);
                     }
                 } else {
@@ -128,12 +139,29 @@ public class LockManager {
                     }
                     break;
                 }
-                while (lockReq.status != LockStatus.GRANTED) {
-                    if (wait) {
-                        lockReq.notify.awaitUninterruptibly();
-                    } else {
-                        return false;
+                if (wait) {
+                    TransactionControlBlock tcb = txnTable.computeIfAbsent(tid, (key) -> new TransactionControlBlock());
+                    synchronized(tcb) {
+                        if (lockReq.status == LockStatus.GRANTED) {
+                            tcb.wait = null;
+                        } else {
+                            tcb.wait = lockReq;
+                        }
                     }
+                    while (lockReq.status != LockStatus.GRANTED) {
+
+                        lockReq.notify.awaitUninterruptibly();
+                    }
+                } else if (lockReq.status == LockStatus.GRANTED) {
+                    TransactionControlBlock tcb = txnTable.computeIfAbsent(tid, (key) -> new TransactionControlBlock());
+                    synchronized(tcb) {
+                        tcb.wait = null;
+                    }
+                } else {
+                    // Clear the conversion info.
+                    lockReq.status = LockStatus.WAITING;
+                    lockReq.convertMode = null;
+                    return false;
                 }
             }
         } finally {
@@ -297,6 +325,7 @@ public class LockManager {
         List<TransactionId> cycle = detectCycle(graph);
         if (cycle != null) {
         }
-        }*/
+    }
+    */
         
 }
