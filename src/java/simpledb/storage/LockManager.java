@@ -2,6 +2,7 @@ package simpledb.storage;
 
 import simpledb.common.Database;
 import simpledb.transaction.TransactionId;
+import simpledb.transaction.TransactionAbortedException;
 
 import java.util.concurrent.locks.*;
 import java.util.concurrent.*;
@@ -17,7 +18,7 @@ public class LockManager {
     }
 
     public enum LockStatus {
-        WAITING, CONVERTING, GRANTED
+        WAITING, CONVERTING, GRANTED, DENIED
     }
     
     private class LockRequest {
@@ -42,9 +43,14 @@ public class LockManager {
     }
     
     private class TransactionControlBlock {
+        public final TransactionId tid;
         public List<LockRequest> lockRequests = new ArrayList<LockRequest>();
         public LockRequest wait; // I'm waiting for which lock
         public TransactionControlBlock cycle = null;
+
+        public TransactionControlBlock(TransactionId tid) {
+            this.tid = tid;
+        }
     }
     
     private ConcurrentHashMap<PageId, LockQueue> lockTable = new ConcurrentHashMap<>();
@@ -53,15 +59,20 @@ public class LockManager {
     public LockManager() {
     }
 
-    public void lockPage(TransactionId tid, PageId pid, LockMode mode) {
+    public void lockPage(TransactionId tid, PageId pid, LockMode mode) throws TransactionAbortedException {
         lockPage(tid, pid, mode, true);
     }
 
     public boolean tryLockPage(TransactionId tid, PageId pid, LockMode mode) {
-        return lockPage(tid, pid, mode, false);
+        try {
+            return lockPage(tid, pid, mode, false);
+        } catch (TransactionAbortedException e) {
+            e.printStackTrace();
+        }
+        return false;
     }
     
-    private boolean lockPage(TransactionId tid, PageId pid, LockMode mode, boolean wait) {
+    private boolean lockPage(TransactionId tid, PageId pid, LockMode mode, boolean wait) throws TransactionAbortedException {
         LockQueue lockQueue = lockTable.computeIfAbsent(pid, (key) -> new LockQueue());
         lockQueue.lock.lock();
         try {
@@ -95,7 +106,7 @@ public class LockManager {
                 }
                 if (wait) {
                     lockQueue.lockRequests.add(lockReq);
-                    TransactionControlBlock tcb = txnTable.computeIfAbsent(tid, (key) -> new TransactionControlBlock());
+                    TransactionControlBlock tcb = txnTable.computeIfAbsent(tid, (key) -> new TransactionControlBlock(key));
                     synchronized(tcb) {
                         if (lockReq.status != LockStatus.GRANTED) {
                             tcb.wait = lockReq;
@@ -104,15 +115,25 @@ public class LockManager {
                         }
                         tcb.lockRequests.add(lockReq);
                     }
-                    while (lockReq.status != LockStatus.GRANTED) {
+                    while (lockReq.status != LockStatus.GRANTED && lockReq.status != LockStatus.DENIED) {
                         lockReq.notify.awaitUninterruptibly();
+                    }
+                    if (lockReq.status == LockStatus.DENIED) {
+                        lockQueue.lockRequests.remove(lockReq);
+                        lockReq.head = null;
+                        lockReq.notify = null;
+                        synchronized(tcb) {
+                            tcb.wait = null;
+                            tcb.lockRequests.remove(lockReq);
+                        }
+                        throw new TransactionAbortedException();
                     }
                     synchronized(tcb) {
                         tcb.wait = null;
                     }
                 } else if (lockReq.status == LockStatus.GRANTED) {
                     lockQueue.lockRequests.add(lockReq);                        
-                    TransactionControlBlock tcb = txnTable.computeIfAbsent(tid, (key) -> new TransactionControlBlock());
+                    TransactionControlBlock tcb = txnTable.computeIfAbsent(tid, (key) -> new TransactionControlBlock(key));
                     synchronized(tcb) {
                         tcb.wait = null;
                         tcb.lockRequests.add(lockReq);
@@ -142,7 +163,7 @@ public class LockManager {
                     break;
                 }
                 if (wait) {
-                    TransactionControlBlock tcb = txnTable.computeIfAbsent(tid, (key) -> new TransactionControlBlock());
+                    TransactionControlBlock tcb = txnTable.computeIfAbsent(tid, (key) -> new TransactionControlBlock(key));
                     synchronized(tcb) {
                         if (lockReq.status == LockStatus.GRANTED) {
                             tcb.wait = null;
@@ -150,12 +171,21 @@ public class LockManager {
                             tcb.wait = lockReq;
                         }
                     }
-                    while (lockReq.status != LockStatus.GRANTED) {
-
+                    while (lockReq.status != LockStatus.GRANTED && lockReq.status != LockStatus.DENIED) {
                         lockReq.notify.awaitUninterruptibly();
                     }
+                    if (lockReq.status == LockStatus.DENIED) {
+                        lockQueue.lockRequests.remove(lockReq);
+                        lockReq.head = null;
+                        lockReq.notify = null;
+                        synchronized(tcb) {
+                            tcb.wait = null;
+                            tcb.lockRequests.remove(lockReq);
+                        }
+                        throw new TransactionAbortedException();
+                    }                        
                 } else if (lockReq.status == LockStatus.GRANTED) {
-                    TransactionControlBlock tcb = txnTable.computeIfAbsent(tid, (key) -> new TransactionControlBlock());
+                    TransactionControlBlock tcb = txnTable.computeIfAbsent(tid, (key) -> new TransactionControlBlock(key));
                     synchronized(tcb) {
                         tcb.wait = null;
                     }
@@ -299,37 +329,80 @@ public class LockManager {
         return true;
     }
 
-    /*
     private void detectDeadlock() {
-        HashMap<TransactionId, HashSet<TransactionId>> graph = new HashMap<>();
-        for (Map.Entry<PageId, LockQueue> e : lockTable) {
-            LockQueue lockQueue = e.getValue();
-            lockQueue.lock.lock();
-            try {
-                HashSet<TransactionId> waited = new HashSet<>();
-                HashSet<TransactionId> waiters = new HashSet<>();
-                for (LockRequest lr : lockQueue.lockRequests) {
-                    if (lr.status == LockMode.GRANTED) {
-                        waited.add(lr.tid);
-                    } else if (lr.status == LockMode.CONVERTING || lr.status == LockMode.WAITING) {
-                        waiters.add(lr.tid);
-                    }
+        for (TransactionControlBlock tcb : txnTable.values()) {
+            synchronized(tcb) {
+                tcb.cycle = null;
+            }
+        }
+        for (TransactionControlBlock tcb : txnTable.values()) {
+            visit(tcb);
+        }
+    }
+
+    private void visit(TransactionControlBlock me) {
+        HashSet<TransactionId> visited = new HashSet<>();
+        for (;;) {
+            boolean hasDeadlock = false;
+            LockQueue lockQueue;
+            synchronized(me) {
+                if (me.cycle != null) {
+                    hasDeadlock = true;
                 }
-                for (TransactionId tid : waiters) {
-                    HashSet<TransactionId> set = graph.computeIfAbsent(tid, (key) -> new HashSet<TransactionId>());
-                    for (TransactionId tid2 : waited) {
-                        set.add(tid2);
+                if (me.wait == null) {
+                    return;
+                }
+                lockQueue = me.wait.head;
+            }
+            lockQueue.lock.lock();
+            TransactionControlBlock cycle = null;
+            try {
+                if (hasDeadlock) {
+                    for (LockRequest lr : lockQueue.lockRequests) {
+                        if (lr.tid.equals(me.tid)) {
+                            lr.status = LockStatus.DENIED;
+                            lr.notify.signal();
+                            break;
+                        }
+                    }
+                    return;
+                }
+
+                synchronized(me) {
+                    LockMode waitMode;
+                    if (me.wait.status == LockStatus.CONVERTING) {
+                        waitMode = me.wait.convertMode;
+                    } else if (me.wait.status == LockStatus.WAITING) {
+                        waitMode = me.wait.mode;
+                    } else {
+                        return;
+                    }
+
+                    for (LockRequest lr : lockQueue.lockRequests) {
+                        if (visited.contains(lr.tid)) {
+                            continue;
+                        }
+                        if (lr.tid.equals(me.tid)) {
+                            break;
+                        }
+                        visited.add(lr.tid);
+                        if (!isCompatible(lr.mode, waitMode) || !isCompatible(lr.convertMode, waitMode)) {
+                            cycle = me.cycle = txnTable.get(lr.tid);
+                            break;
+                        }
                     }
                 }
             } finally {
                 lockQueue.lock.unlock();
             }
-        }
-
-        List<TransactionId> cycle = detectCycle(graph);
-        if (cycle != null) {
+            if (cycle == null) {
+                return;
+            }
+            visit(cycle);
+            synchronized(me) {
+                me.cycle = null;
+            }
         }
     }
-    */
         
 }
