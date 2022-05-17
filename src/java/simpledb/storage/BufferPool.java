@@ -296,6 +296,7 @@ public class BufferPool {
         }
         synchronized(set) {
             for (PageId pid : set) {
+                // Assumed this txn has locked this page.
                 flushPage(pid);
             }
             set.clear();
