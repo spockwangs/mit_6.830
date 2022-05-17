@@ -11,13 +11,18 @@ import java.util.HashSet;
 import java.util.ArrayList;
 import java.util.List;
 
+
 public class LockManager {
 
     public enum LockMode {
         SHARED, EXCLUSIVE
     }
 
-    public enum LockStatus {
+    public enum LockClass {
+        SHORT, LONG
+    }
+
+    private enum LockStatus {
         WAITING, CONVERTING, GRANTED, DENIED
     }
     
@@ -29,11 +34,17 @@ public class LockManager {
         public LockMode convertMode;
         public Condition notify;
         public LockQueue head;
+        public LockClass lockClass;
+        public int count;
 
-        public LockRequest(TransactionId tid, LockMode mode, PageId pid) {
+        public LockRequest(TransactionId tid, LockMode mode, PageId pid, Condition notify, LockQueue head, LockClass lockClass) {
             this.tid = tid;
             this.mode = mode;
             this.pid = pid;
+            this.notify = notify;
+            this.head = head;
+            this.lockClass = lockClass;
+            this.count = 1;
         }
     }
 
@@ -74,20 +85,20 @@ public class LockManager {
         this.t.start();
     }
 
-    public void lockPage(TransactionId tid, PageId pid, LockMode mode) throws TransactionAbortedException {
-        lockPage(tid, pid, mode, true);
+    public void lock(TransactionId tid, PageId pid, LockMode mode, LockClass lockClass) throws TransactionAbortedException {
+        lockPage(tid, pid, mode, lockClass, true);
     }
 
-    public boolean tryLockPage(TransactionId tid, PageId pid, LockMode mode) {
+    public boolean tryLock(TransactionId tid, PageId pid, LockMode mode, LockClass lockClass) {
         try {
-            return lockPage(tid, pid, mode, false);
+            return lockPage(tid, pid, mode, lockClass, false);
         } catch (TransactionAbortedException e) {
             e.printStackTrace();
         }
         return false;
     }
     
-    private boolean lockPage(TransactionId tid, PageId pid, LockMode mode, boolean wait) throws TransactionAbortedException {
+    private boolean lockPage(TransactionId tid, PageId pid, LockMode mode, LockClass lockClass, boolean wait) throws TransactionAbortedException {
         LockQueue lockQueue = lockTable.computeIfAbsent(pid, (key) -> new LockQueue());
         lockQueue.lock.lock();
         try {
@@ -115,9 +126,7 @@ public class LockManager {
                 }
             }
             if (lockReq == null) {
-                lockReq = new LockRequest(tid, mode, pid);
-                lockReq.head = lockQueue;
-                lockReq.notify = lockQueue.lock.newCondition();
+                lockReq = new LockRequest(tid, mode, pid, lockQueue.lock.newCondition(), lockQueue, lockClass);
                 if (!waiting && isCompatible(maxGrantedMode, lockReq.mode)) {
                     lockReq.status = LockStatus.GRANTED;
                 }
@@ -160,6 +169,7 @@ public class LockManager {
                 }
             } else {
                 // Conversion case
+                lockReq.count++;
                 if (mode == LockMode.EXCLUSIVE && lockReq.mode == LockMode.SHARED) {
                     if (lockReq.status == LockStatus.GRANTED) {
                         lockReq.convertMode = mode;
@@ -203,11 +213,15 @@ public class LockManager {
                         // Clear the conversion info.
                         lockReq.status = LockStatus.GRANTED;
                         lockReq.convertMode = null;
+                        lockReq.count--;
                         synchronized(tcb) {
                             tcb.wait = null;
                         }
                         throw new TransactionAbortedException();
-                    }                        
+                    }
+                    // The conversion request is granted.
+                    lockReq.convertMode = null;
+                    lockReq.lockClass = maxClass(lockReq.lockClass, lockClass);
                 } else if (lockReq.status == LockStatus.GRANTED) {
                     TransactionControlBlock tcb = txnTable.computeIfAbsent(tid, (key) -> new TransactionControlBlock(key));
                     synchronized(tcb) {
@@ -217,6 +231,7 @@ public class LockManager {
                     // Clear the conversion info.
                     lockReq.status = LockStatus.GRANTED;
                     lockReq.convertMode = null;
+                    lockReq.count--;
                     return false;
                 }
             }
@@ -226,7 +241,28 @@ public class LockManager {
         return true;
     }
 
-    public void unlockPage(TransactionId tid, PageId pid) {
+    public void unlockTransaction(TransactionId tid) {
+        TransactionControlBlock tcb = txnTable.get(tid);
+        if (tcb == null) {
+            return;
+        }
+        HashSet<PageId> set = new HashSet<>();
+        synchronized(tcb) {
+            for (LockRequest lr : tcb.lockRequests) {
+                set.add(lr.pid);
+            }
+        }
+        for (PageId pid : set) {
+            unlockClass(tid, pid, LockClass.LONG);
+        }
+        txnTable.remove(tid);
+    }
+
+    public void unlock(TransactionId tid, PageId pid) {
+        unlockClass(tid, pid, LockClass.SHORT);
+    }
+
+    private void unlockClass(TransactionId tid, PageId pid, LockClass lockClass) {
         LockQueue lockQueue = lockTable.get(pid);
         if (lockQueue == null) {
             return;
@@ -240,6 +276,10 @@ public class LockManager {
                 if (tid.equals(lr.tid)) {
                     if (lr.status != LockStatus.GRANTED) {
                         throw new IllegalArgumentException("can't unlock ungranted lock");
+                    }
+                    if (lockClass != LockClass.LONG && (lr.lockClass.ordinal() > lockClass.ordinal() || lr.count > 1)) {
+                        lr.count--;
+                        return;
                     }
                     lockReq = lr;
                 } else if (lr.status == LockStatus.GRANTED) {
@@ -286,23 +326,6 @@ public class LockManager {
         } finally {
             lockQueue.lock.unlock();
         }
-    }
-
-    public void unlockPages(TransactionId tid) {
-        TransactionControlBlock tcb = txnTable.get(tid);
-        if (tcb == null) {
-            return;
-        }
-        HashSet<PageId> set = new HashSet<>();
-        synchronized(tcb) {
-            for (LockRequest lr : tcb.lockRequests) {
-                set.add(lr.pid);
-            }
-        }
-        for (PageId pid : set) {
-            unlockPage(tid, pid);
-        }
-        txnTable.remove(tid);
     }
 
     public boolean isLocked(TransactionId tid, PageId pid) {
@@ -430,6 +453,19 @@ public class LockManager {
                 me.cycle = null;
             }
         }
+    }
+
+    private LockClass maxClass(LockClass a, LockClass b) {
+        if (a == null) {
+            return b;
+        }
+        if (b == null) {
+            return a;
+        }
+        if (a.ordinal() < b.ordinal()) {
+            return b;
+        }
+        return a;
     }
         
 }

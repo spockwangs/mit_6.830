@@ -94,7 +94,7 @@ public class BufferPool {
         } else {
             mode = LockManager.LockMode.EXCLUSIVE;
         }
-        this.lockManager.lockPage(tid, pid, mode);
+        this.lockManager.lock(tid, pid, mode, LockManager.LockClass.SHORT);
         if (perm == Permissions.READ_WRITE) {
             HashSet<PageId> set = txnTable.computeIfAbsent(tid, (key) -> new HashSet<PageId>());
             synchronized(set) {
@@ -132,7 +132,7 @@ public class BufferPool {
     public  void unsafeReleasePage(TransactionId tid, PageId pid) {
         // some code goes here
         // not necessary for lab1|lab2
-        this.lockManager.unlockPage(tid, pid);
+        this.lockManager.unlock(tid, pid);
     }
 
     /**
@@ -177,7 +177,7 @@ public class BufferPool {
                 }
                 txnTable.remove(tid);
             }
-            this.lockManager.unlockPages(tid);
+            this.lockManager.unlockTransaction(tid);
         } catch (IOException e) {
             e.printStackTrace();
         }
@@ -313,13 +313,13 @@ public class BufferPool {
         try {
             TransactionId tid = new TransactionId();
             for (PageId pid : this.pageMap.keySet()) {
-                if (this.lockManager.tryLockPage(tid, pid, LockManager.LockMode.SHARED)) {
+                if (this.lockManager.tryLock(tid, pid, LockManager.LockMode.SHARED, LockManager.LockClass.SHORT)) {
                     Page page = this.pageMap.get(pid);
                     if (page.isDirty() == null && page.getFixCount() <= 0) {
                         this.flushPage(pid);
                         this.discardPage(pid);
                     }
-                    this.lockManager.unlockPage(tid, pid);
+                    this.lockManager.unlock(tid, pid);
                     return;
                 }
             }
