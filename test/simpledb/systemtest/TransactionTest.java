@@ -32,7 +32,7 @@ import static org.junit.Assert.*;
  */
 public class TransactionTest extends SimpleDbTestBase {
     // Wait up to 10 minutes for the test to complete
-    private static final int TIMEOUT_MILLIS = 10 * 1000;
+    private static final int TIMEOUT_MILLIS = 10 * 60 * 1000;
     private void validateTransactions(int threads)
             throws DbException, TransactionAbortedException, IOException {
         // Create a table with a single integer value = 0
@@ -225,12 +225,11 @@ public class TransactionTest extends SimpleDbTestBase {
         validateTransactions(2);
     }
 
-    /*
     @Test public void testFiveThreads()
             throws IOException, DbException, TransactionAbortedException {
         validateTransactions(5);
     }
-    
+
     @Test public void testTenThreads()
     throws IOException, DbException, TransactionAbortedException {
         validateTransactions(10);
@@ -256,7 +255,6 @@ public class TransactionTest extends SimpleDbTestBase {
         } catch (DbException ignored) {}
         t.commit();
     }
-    */
 
     /** Make test compatible with older version of ant. */
     public static junit.framework.Test suite() {

@@ -32,5 +32,7 @@ public interface PageId {
     boolean equals(Object o);
 
     int getPageNumber();
+
+    String toString();
 }
 

@@ -59,7 +59,6 @@ public class LockManager {
     private Thread t;
     
     public LockManager() {
-        System.err.println("LockManager\n");
         this.t = new Thread() {
                 public void run() {
                     for (;;) {
@@ -76,9 +75,7 @@ public class LockManager {
     }
 
     public void lockPage(TransactionId tid, PageId pid, LockMode mode) throws TransactionAbortedException {
-        System.out.println("lockPage: tid=" + tid.getId() + ", pid=" + pid.getPageNumber());
         lockPage(tid, pid, mode, true);
-        System.out.println("lockedPage: tid=" + tid.getId() + ", pid=" + pid.getPageNumber());
     }
 
     public boolean tryLockPage(TransactionId tid, PageId pid, LockMode mode) {
@@ -97,6 +94,7 @@ public class LockManager {
             LockMode maxGrantedMode = null;
             boolean waiting = false;
             LockRequest lockReq = null;
+            ArrayList<LockRequest> convertingRequests = new ArrayList<>();
             for (LockRequest lr : lockQueue.lockRequests) {
                 if (tid.equals(lr.tid)) {
                     lockReq = lr;
@@ -111,6 +109,7 @@ public class LockManager {
                     case CONVERTING:
                         waiting = true;
                         maxGrantedMode = maxMode(maxGrantedMode, lr.mode);
+                        convertingRequests.add(lr);
                         break;
                     }
                 }
@@ -177,7 +176,15 @@ public class LockManager {
                         lockReq.status = LockStatus.GRANTED;
                         lockReq.mode = lockReq.convertMode;
                         lockReq.convertMode = null;
-                    }
+                    } else {
+                        // Check if there is a deadlock with another converting request.
+                        for (LockRequest lr : convertingRequests) {
+                            if (!isCompatible(lockReq.convertMode, lr.mode) && !isCompatible(lr.convertMode, lockReq.mode)) {
+                                lockReq.status = LockStatus.DENIED;
+                                break;
+                            }
+                        }
+                    }       
                     break;
                 }
                 if (wait) {
@@ -193,12 +200,11 @@ public class LockManager {
                         lockReq.notify.awaitUninterruptibly();
                     }
                     if (lockReq.status == LockStatus.DENIED) {
-                        lockQueue.lockRequests.remove(lockReq);
-                        lockReq.head = null;
-                        lockReq.notify = null;
+                        // Clear the conversion info.
+                        lockReq.status = LockStatus.GRANTED;
+                        lockReq.convertMode = null;
                         synchronized(tcb) {
                             tcb.wait = null;
-                            tcb.lockRequests.remove(lockReq);
                         }
                         throw new TransactionAbortedException();
                     }                        
@@ -209,7 +215,7 @@ public class LockManager {
                     }
                 } else {
                     // Clear the conversion info.
-                    lockReq.status = LockStatus.WAITING;
+                    lockReq.status = LockStatus.GRANTED;
                     lockReq.convertMode = null;
                     return false;
                 }
@@ -354,24 +360,18 @@ public class LockManager {
             }
         }
         for (TransactionControlBlock tcb : txnTable.values()) {
-            System.out.println("begin visit");
             visit(tcb);
-            System.out.println("end visit");
         }
     }
 
     private void visit(TransactionControlBlock me) {
-        System.out.println("visiting " + me.tid.getId());
-
         boolean hasDeadlock = false;
         LockQueue lockQueue;
         synchronized(me) {
             if (me.cycle != null) {
                 hasDeadlock = true;
             }
-            System.out.println("hasDeadlock=" + hasDeadlock);
             if (me.wait == null) {
-                System.out.println("exit visit");
                 return;
             }
             lockQueue = me.wait.head;
@@ -379,12 +379,10 @@ public class LockManager {
         if (hasDeadlock) {
             lockQueue.lock.lock();
             try {
-                System.out.println("deadlock deny " + me.tid.getId());
                 for (LockRequest lr : lockQueue.lockRequests) {
                     if (lr.tid.equals(me.tid)) {
                         lr.status = LockStatus.DENIED;
                         lr.notify.signal();
-                        System.out.println("exit visit");
                         return;
                     }
                 }
@@ -405,12 +403,9 @@ public class LockManager {
                     } else if (me.wait.status == LockStatus.WAITING) {
                         waitMode = me.wait.mode;
                     } else {
-                        System.out.println("exit visit");
                         return;
                     }
-                    System.out.println("waitMode=" + waitMode);
                     for (LockRequest lr : lockQueue.lockRequests) {
-                        System.out.println("lr.tid=" + lr.tid.getId() + ", lr.pid=" + lr.pid.getPageNumber());
                         if (visited.contains(lr.tid)) {
                             continue;
                         }
@@ -428,7 +423,6 @@ public class LockManager {
                 lockQueue.lock.unlock();
             }
             if (cycle == null) {
-                System.out.println("exit visit cycle null");
                 return;
             }
             visit(cycle);

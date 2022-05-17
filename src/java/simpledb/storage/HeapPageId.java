@@ -79,4 +79,14 @@ public class HeapPageId implements PageId {
         return data;
     }
 
+    public String toString() {
+        StringBuilder sb = new StringBuilder(10);
+        sb.append("(");
+        sb.append(Integer.toString(getTableId()));
+        sb.append(",");
+        sb.append(Integer.toString(getPageNumber()));
+        sb.append(")");
+        return sb.toString();
+    }
+
 }

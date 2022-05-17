@@ -247,7 +247,7 @@ public class BufferPool {
     public synchronized void flushAllPages() throws IOException {
         // some code goes here
         // not necessary for lab1
-        TransactionId tid = new TransactionId();
+        //TransactionId tid = new TransactionId();
         for (PageId pid : this.pageMap.keySet()) {
             //this.lockManager.lockPage(tid, pid, LockManager.LockMode.SHARED);
             flushPage(pid);
