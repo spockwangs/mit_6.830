@@ -31,6 +31,8 @@ public abstract class BTreePage implements Page {
 	protected byte[] oldData;
 	protected final Byte oldDataLock= (byte) 0;
 
+    protected int fixCount = 1;
+
 	/**
 	 * Create a BTreeInternalPage from a set of bytes of data read from disk.
 	 * The format of a BTreeInternalPage is a set of header bytes indicating
@@ -145,19 +147,19 @@ public abstract class BTreePage implements Page {
 	public abstract boolean isSlotUsed(int i);
 
     public int getFixCount() {
-		throw new UnsupportedOperationException();
+        return fixCount;
     }
 
     public void setFixCount(int a) {
-        throw new UnsupportedOperationException();
+        fixCount = a;
     }
 
     public void incFixCount() {
-        throw new UnsupportedOperationException();
+        ++fixCount;
     }
     
     public void decFixCount() {
-        throw new UnsupportedOperationException();
+        --fixCount;
     }
 }
 
