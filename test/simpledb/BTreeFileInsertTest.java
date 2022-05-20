@@ -37,7 +37,6 @@ public class BTreeFileInsertTest extends SimpleDbTestBase {
 		Database.reset();
 	}
 
-	@Test
 	public void testSplitLeafPages() throws Exception {
 		File emptyFile = File.createTempFile("empty", ".dat");
 		emptyFile.deleteOnExit();
@@ -86,7 +85,7 @@ public class BTreeFileInsertTest extends SimpleDbTestBase {
 		assertEquals(1, parent.getNumEntries());
 	}
 
-	@Test
+    @Test
 	public void testSplitInternalPages() throws Exception {
 		File emptyFile = File.createTempFile("empty", ".dat");
 		emptyFile.deleteOnExit();
@@ -136,7 +135,6 @@ public class BTreeFileInsertTest extends SimpleDbTestBase {
 				entriesPerPage/2 - 1 == otherPage.getNumEntries());
 	}    
 
-	@Test
 	public void testReusePage() throws Exception {
 		File emptyFile = File.createTempFile("empty", ".dat");
 		emptyFile.deleteOnExit();

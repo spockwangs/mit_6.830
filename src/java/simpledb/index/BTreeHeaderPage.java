@@ -36,6 +36,8 @@ public class BTreeHeaderPage implements Page {
 	byte[] oldData;
 	private final Byte oldDataLock= (byte) 0;
 
+    private int fixCount = 1;
+    
 	/**
 	 * Create a BTreeHeaderPage from a set of bytes of data read from disk.
 	 * The format of a BTreeHeaderPage is two pointers to the next and previous
@@ -314,19 +316,19 @@ public class BTreeHeaderPage implements Page {
 	}
 
     public int getFixCount() {
-		throw new UnsupportedOperationException();
+        return fixCount;
     }
 
     public void setFixCount(int a) {
-        throw new UnsupportedOperationException();
+        fixCount = a;
     }
 
     public void incFixCount() {
-        throw new UnsupportedOperationException();
+        ++fixCount;
     }
     
     public void decFixCount() {
-        throw new UnsupportedOperationException();
+        --fixCount;
     }
 
 }

@@ -311,6 +311,7 @@ public class BufferPool {
         // some code goes here
         // not necessary for lab1
         try {
+            boolean found = false;
             TransactionId tid = new TransactionId();
             for (PageId pid : this.pageMap.keySet()) {
                 if (this.lockManager.tryLock(tid, pid, LockManager.LockMode.SHARED, LockManager.LockClass.SHORT)) {
@@ -318,9 +319,12 @@ public class BufferPool {
                     if (page.isDirty() == null && page.getFixCount() <= 0) {
                         this.flushPage(pid);
                         this.discardPage(pid);
+                        found = true;
                     }
                     this.lockManager.unlock(tid, pid);
-                    return;
+                    if (found) {
+                        return;
+                    }
                 }
             }
             throw new DbException("no available page to evict");
