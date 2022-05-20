@@ -318,7 +318,8 @@ public class LockManager {
             }
             lockReq.head = null;
             lockReq.notify = null;
-            lockQueue.lockRequests.remove(lockReq);
+            boolean exists = lockQueue.lockRequests.remove(lockReq);
+            assert exists == true;
             TransactionControlBlock tcb = txnTable.get(tid);
             synchronized(tcb) {
                 tcb.lockRequests.remove(lockReq);

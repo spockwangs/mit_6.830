@@ -321,7 +321,7 @@ public class BufferPool {
                         this.discardPage(pid);
                         found = true;
                     }
-                    this.lockManager.unlock(tid, pid);
+                    this.lockManager.unlockTransaction(tid);
                     if (found) {
                         return;
                     }
