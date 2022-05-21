@@ -421,25 +421,35 @@ public class LockManager {
             TransactionControlBlock cycle = null;
             try {
                 synchronized(me) {
-                    LockMode waitMode;
-                    if (me.wait.status == LockStatus.CONVERTING) {
-                        waitMode = me.wait.convertMode;
-                    } else if (me.wait.status == LockStatus.WAITING) {
-                        waitMode = me.wait.mode;
-                    } else {
+                    if (me.wait == null) {
+                        return;
+                    }
+                    if (me.wait.status != LockStatus.CONVERTING && me.wait.status != LockStatus.WAITING) {
                         return;
                     }
                     for (LockRequest lr : lockQueue.lockRequests) {
                         if (visited.contains(lr.tid)) {
                             continue;
                         }
-                        if (lr.tid.equals(me.tid)) {
-                            break;
-                        }
                         visited.add(lr.tid);
-                        if (!isCompatible(lr.mode, waitMode) || !isCompatible(lr.convertMode, waitMode)) {
-                            cycle = me.cycle = txnTable.get(lr.tid);
-                            break;
+                        if (me.wait.status == LockStatus.WAITING) {
+                            if (lr.tid.equals(me.tid)) {
+                                break;
+                            }
+                            if (!isCompatible(lr.mode, me.wait.mode) || !isCompatible(lr.convertMode, me.wait.mode)) {
+                                cycle = me.cycle = txnTable.get(lr.tid);
+                                break;
+                            }
+                        } else if (me.wait.status == LockStatus.CONVERTING) {
+                            if (lr.status == LockStatus.WAITING) {
+                                break;
+                            }
+                            if (!isCompatible(lr.mode, me.wait.convertMode)) {
+                                cycle = me.cycle = txnTable.get(lr.tid);
+                                break;
+                            }
+                        } else {
+                            assert false;
                         }
                     }
                 }
