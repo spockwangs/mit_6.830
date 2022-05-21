@@ -330,34 +330,28 @@ public class BTreeFile implements DbFile {
         Iterator<BTreeEntry> it = page.iterator();
         int i = 0;
         BTreeEntry middleEntry = null;
+        BTreeEntry pushedUpEntry = null;
         while (it.hasNext()) {
             BTreeEntry t = it.next();
             ++i;
             if (i < (numEntries+1)/2) {
                 continue;
             } else if (i == (numEntries+1)/2) {
-                middleEntry = new BTreeEntry(t.getKey(), page.getId(), newPage.getId());
+                pushedUpEntry = new BTreeEntry(t.getKey(), page.getId(), newPage.getId());
+                middleEntry = t;
             } else {
                 page.deleteKeyAndRightChild(t);
                 newPage.insertEntry(t);
             }
         }
         updateParentPointers(tid, dirtypages, newPage);
-        it = page.iterator();
-        i = 0;
-        while (it.hasNext()) {
-            ++i;
-            if (i < (numEntries+1)/2) {
-                continue;
-            }
-            page.deleteKeyAndRightChild(it.next());
-        }
+        page.deleteKeyAndRightChild(middleEntry);
         
         BTreeInternalPage parent = getParentWithEmptySlots(tid, dirtypages, page.getParentId(), field);
-        parent.insertEntry(middleEntry);
+        parent.insertEntry(pushedUpEntry);
         updateParentPointer(tid, dirtypages, parent.getId(), page.getId());
         updateParentPointer(tid, dirtypages, parent.getId(), newPage.getId());
-        if (field.compare(Op.LESS_THAN, middleEntry.getKey())) {
+        if (field.compare(Op.LESS_THAN, pushedUpEntry.getKey())) {
             return page;
         }
 		return newPage;

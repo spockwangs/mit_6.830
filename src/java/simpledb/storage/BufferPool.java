@@ -103,9 +103,9 @@ public class BufferPool {
         }
         Page page = this.pageMap.get(pid);
         if (page == null) {
-            while (this.pageMap.size() >= this.maxNumPages) {
-                 evictPage();
-            }
+            // while (this.pageMap.size() >= this.maxNumPages) {
+            //       evictPage();
+            // }
             DbFile dbFile = Database.getCatalog().getDatabaseFile(pid.getTableId());
             page = dbFile.readPage(pid);
             page.setFixCount(1);
@@ -311,22 +311,17 @@ public class BufferPool {
         // some code goes here
         // not necessary for lab1
         try {
-            boolean found = false;
             TransactionId tid = new TransactionId();
             for (PageId pid : this.pageMap.keySet()) {
                 if (this.lockManager.tryLock(tid, pid, LockManager.LockMode.SHARED, LockManager.LockClass.SHORT)) {
                     Page page = this.pageMap.get(pid);
-                    if (page.isDirty() == null && page.getFixCount() <= 0) {
-                        this.flushPage(pid);
-                        this.discardPage(pid);
-                        found = true;
-                    }
+                    this.flushPage(pid);
+                    this.discardPage(pid);
                     this.lockManager.unlockTransaction(tid);
-                    if (found) {
-                        return;
-                    }
+                    return;
                 }
             }
+            this.lockManager.unlockTransaction(tid);
             throw new DbException("no available page to evict");
         } catch (IOException e) {
             throw new DbException(e.toString());
