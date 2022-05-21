@@ -759,11 +759,12 @@ public class BTreeFile implements DbFile {
         Iterator<BTreeEntry> it = page.iterator();
         BTreePageId leftMostChild = it.next().getLeftChild();
         it = leftSibling.reverseIterator();
-        while (it.hasNext() && stealNum >= 0) {
+        while (it.hasNext() && stealNum > 0) {
             BTreeEntry e = it.next();
             BTreeEntry newEntry = new BTreeEntry(parentEntry.getKey(), e.getRightChild(), leftMostChild);
             page.insertEntry(newEntry);
             parentEntry.setKey(e.getKey());
+            parent.updateEntry(parentEntry);
             leftSibling.deleteKeyAndRightChild(e);
             leftMostChild = newEntry.getLeftChild();
             --stealNum;
@@ -810,6 +811,7 @@ public class BTreeFile implements DbFile {
             page.insertEntry(newEntry);
             rightSibling.deleteKeyAndLeftChild(e);
             parentEntry.setKey(e.getKey());
+            parent.updateEntry(parentEntry);
             rightMostChild = newEntry.getRightChild();
             --stealNum;
         }
@@ -844,6 +846,19 @@ public class BTreeFile implements DbFile {
 		// the sibling pointers, and make the right page available for reuse.
 		// Delete the entry in the parent corresponding to the two pages that are merging -
 		// deleteParentEntry() will be useful here
+        Iterator<Tuple> it = rightPage.iterator();
+        while (it.hasNext()) {
+            Tuple t = it.next();
+            rightPage.deleteTuple(t);
+            leftPage.insertTuple(t);
+        }
+        leftPage.setRightSiblingId(rightPage.getRightSiblingId());
+        if (leftPage.getRightSiblingId() != null) {
+            BTreeLeafPage page = (BTreeLeafPage) getPage(tid, dirtypages, leftPage.getRightSiblingId(), Permissions.READ_WRITE);
+            page.setLeftSiblingId(leftPage.getId());
+        }
+        setEmptyPage(tid, dirtypages, rightPage.getId().getPageNumber());
+        deleteParentEntry(tid, dirtypages, leftPage, parent, parentEntry);
 	}
 
 	/**
@@ -877,6 +892,23 @@ public class BTreeFile implements DbFile {
 		// and make the right page available for reuse
 		// Delete the entry in the parent corresponding to the two pages that are merging -
 		// deleteParentEntry() will be useful here
+        Iterator<BTreeEntry> it = leftPage.reverseIterator();
+        BTreePageId rightMostChild = it.next().getRightChild();
+        boolean pullDown = true;
+        it = rightPage.iterator();
+        while (it.hasNext()) {
+            BTreeEntry e = it.next();
+            if (pullDown) {
+                BTreeEntry newEntry = new BTreeEntry(parentEntry.getKey(), rightMostChild, e.getLeftChild());
+                leftPage.insertEntry(newEntry);
+                pullDown = false;
+            }
+            rightPage.deleteKeyAndLeftChild(e);
+            leftPage.insertEntry(e);
+        }
+        setEmptyPage(tid, dirtypages, rightPage.getId().getPageNumber());
+        updateParentPointers(tid, dirtypages, leftPage);
+        deleteParentEntry(tid, dirtypages, leftPage, parent, parentEntry);
 	}
 	
 	/**
