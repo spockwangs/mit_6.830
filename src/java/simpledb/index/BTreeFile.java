@@ -676,6 +676,7 @@ public class BTreeFile implements DbFile {
             it = page.iterator();
         }
         entry.setKey(it.next().getField(keyField));
+        parent.updateEntry(entry);
 	}
 
 	/**

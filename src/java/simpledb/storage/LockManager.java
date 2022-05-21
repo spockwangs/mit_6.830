@@ -444,7 +444,9 @@ public class LockManager {
                             if (lr.status == LockStatus.WAITING) {
                                 break;
                             }
-                            if (!isCompatible(lr.mode, me.wait.convertMode)) {
+                            if (!lr.tid.equals(me.tid)
+                                && (!isCompatible(lr.mode, me.wait.convertMode)
+                                    || !isCompatible(lr.convertMode, me.wait.convertMode))) {
                                 cycle = me.cycle = txnTable.get(lr.tid);
                                 break;
                             }
