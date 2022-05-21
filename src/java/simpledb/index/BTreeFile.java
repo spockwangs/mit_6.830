@@ -264,6 +264,10 @@ public class BTreeFile implements DbFile {
         BTreeLeafPage newPage = (BTreeLeafPage) getEmptyPage(tid, dirtypages, BTreePageId.LEAF);
         newPage.setLeftSiblingId(page.getId());
         newPage.setRightSiblingId(page.getRightSiblingId());
+        if (page.getRightSiblingId() != null) {
+            BTreeLeafPage rightPage = (BTreeLeafPage) getPage(tid, dirtypages, page.getRightSiblingId(), Permissions.READ_WRITE);
+            rightPage.setLeftSiblingId(newPage.getId());
+        }
         page.setRightSiblingId(newPage.getId());
 
         int numTuples = page.getNumTuples();
