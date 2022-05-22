@@ -460,6 +460,38 @@ public class LogFile {
             synchronized(this) {
                 preAppend();
                 // some code goes here
+                Long offset = tidToFirstLogRecord.get(tid.getId());
+                assert offset != null;
+                raf.seek(offset);
+                Set<PageId> restoredPages = new HashSet<PageId>();
+                for (;;) {
+                    try {
+                        int recordType = raf.readInt();
+                        long txnId = raf.readLong();
+                        switch (recordType) {
+                        case UPDATE_RECORD:
+                            Page before = readPageData(raf);
+                            readPageData(raf);
+                            if (txnId == tid.getId() && !restoredPages.contains(before.getId())) {
+                                Database.getCatalog().getDatabaseFile(before.getId().getTableId()).writePage(before);
+                                restoredPages.add(before.getId());
+                            }
+                            break;
+                        case CHECKPOINT_RECORD:
+                            int numXactions = raf.readInt();
+                            while (numXactions-- > 0) {
+                                raf.readLong();
+                                raf.readLong();
+                            }
+                            break;
+                        case BEGIN_RECORD:
+                            break;
+                        }
+                        raf.readLong();
+                    } catch (EOFException e) {
+                        break;
+                    }
+                }
             }
         }
     }
