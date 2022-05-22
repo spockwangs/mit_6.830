@@ -474,6 +474,7 @@ public class LogFile {
                             readPageData(raf);
                             if (txnId == tid.getId() && !restoredPages.contains(before.getId())) {
                                 Database.getCatalog().getDatabaseFile(before.getId().getTableId()).writePage(before);
+                                Database.getBufferPool().discardPage(before.getId());
                                 restoredPages.add(before.getId());
                             }
                             break;
@@ -519,8 +520,81 @@ public class LogFile {
             synchronized (this) {
                 recoveryUndecided = false;
                 // some code goes here
+                raf.seek(0);
+                long cpOffset = raf.readLong();
+                if (cpOffset == -1) {
+                    raf.seek(LONG_SIZE);
+                } else {
+                    raf.seek(cpOffset);
+                }
+
+                // First pass: redo updates for all transactions.
+                Set<Long> losers = new HashSet<>();
+                for (;;) {
+                    try {
+                        long recordOffset = raf.getFilePointer();
+                        int recordType = raf.readInt();
+                        long txnId = raf.readLong();
+                        switch (recordType) {
+                        case BEGIN_RECORD:
+                            losers.add(txnId);
+                            break;
+                        case UPDATE_RECORD:
+                            readPageData(raf);
+                            Page after = readPageData(raf);
+                            Database.getCatalog().getDatabaseFile(after.getId().getTableId()).writePage(after);
+                            Database.getBufferPool().discardPage(after.getId());
+                            break;
+                        case COMMIT_RECORD:
+                            losers.remove(txnId);
+                            break;
+                        case CHECKPOINT_RECORD:
+                            int numXactions = raf.readInt();
+                            while (numXactions-- > 0) {
+                                txnId = raf.readLong();
+                                raf.readLong();
+                                losers.add(txnId);
+                            }
+                            break;
+                        }
+                        raf.readLong();
+                    } catch (EOFException e) {
+                        break;
+                    }
+                }
+                // Second pass: undo all loser transactions.
+                raf.seek(raf.length());
+                // Pages that have been redone by winners, so should not be undone by losers.
+                Set<PageId> redonePages = new HashSet<>(); 
+                while (!losers.isEmpty()) {
+                    long curPos = raf.getFilePointer();
+                    if (curPos < LONG_SIZE) {
+                        break;
+                    }
+                    raf.seek(curPos - LONG_SIZE);
+                    long recordOffset = raf.readLong();
+                    raf.seek(recordOffset);
+                    int recordType = raf.readInt();
+                    long txnId = raf.readLong();
+                    switch (recordType) {
+                    case BEGIN_RECORD:
+                        losers.remove(txnId);
+                        break;
+                    case UPDATE_RECORD:
+                        Page before = readPageData(raf);
+                        readPageData(raf);
+                        if (losers.contains(txnId) && !redonePages.contains(before.getId())) {
+                            Database.getCatalog().getDatabaseFile(before.getId().getTableId()).writePage(before);
+                            Database.getBufferPool().discardPage(before.getId());
+                        } else {
+                            redonePages.add(before.getId());
+                        }
+                        break;
+                    }
+                    raf.seek(recordOffset);
+                }
             }
-         }
+        }
     }
 
     /** Print out a human readable represenation of the log */
@@ -603,4 +677,10 @@ public class LogFile {
         raf.getChannel().force(true);
     }
 
+    private void logAbortForLoser(long txnId) throws IOException {
+        raf.writeInt(ABORT_RECORD);
+        raf.writeLong(txnId);
+        raf.writeLong(currentOffset);
+        currentOffset = raf.getFilePointer();
+    }
 }
