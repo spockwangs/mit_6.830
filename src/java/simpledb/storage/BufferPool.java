@@ -170,6 +170,10 @@ public class BufferPool {
                     for (PageId pid : set) {
                         if (commit) {
                             flushPage(pid);
+                            Page page = this.pageMap.get(pid);
+                            if (page != null) {
+                                page.setBeforeImage();
+                            }
                         } else {
                             discardPage(pid);
                         }
@@ -280,6 +284,8 @@ public class BufferPool {
         if (page == null || page.isDirty() == null) {
             return;
         }
+        Database.getLogFile().logWrite(page.isDirty(), page.getBeforeImage(), page);
+        Database.getLogFile().force();
         DbFile dbFile = Database.getCatalog().getDatabaseFile(pid.getTableId());
         dbFile.writePage(page);
         page.markDirty(false, null);
