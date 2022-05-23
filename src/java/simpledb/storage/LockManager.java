@@ -294,6 +294,7 @@ public class LockManager {
                         if (l.status == LockStatus.GRANTED || l.status == LockStatus.CONVERTING) {
                             maxMode = maxMode(maxMode, l.mode);
                         } else {
+                            assert l.status == LockStatus.WAITING;
                             break;
                         }
                     }
@@ -381,30 +382,12 @@ public class LockManager {
     }
 
     private void visit(TransactionControlBlock me) {
-        boolean hasDeadlock = false;
         LockQueue lockQueue;
         synchronized(me) {
-            if (me.cycle != null) {
-                hasDeadlock = true;
-            }
             if (me.wait == null) {
                 return;
             }
             lockQueue = me.wait.head;
-        }
-        if (hasDeadlock) {
-            lockQueue.lock.lock();
-            try {
-                for (LockRequest lr : lockQueue.lockRequests) {
-                    if (lr.tid.equals(me.tid)) {
-                        lr.status = LockStatus.DENIED;
-                        lr.notify.signal();
-                        return;
-                    }
-                }
-            } finally {
-                lockQueue.lock.unlock();
-            }
         }
         
         HashSet<TransactionId> visited = new HashSet<>();
@@ -419,6 +402,19 @@ public class LockManager {
                     if (me.wait.status != LockStatus.CONVERTING && me.wait.status != LockStatus.WAITING) {
                         return;
                     }
+                    if (me.wait.head != lockQueue) {
+                        return;
+                    }
+                    if (me.cycle != null) {
+                        for (LockRequest lr : lockQueue.lockRequests) {
+                            if (lr.tid.equals(me.tid)) {
+                                lr.status = LockStatus.DENIED;
+                                lr.notify.signal();
+                                return;
+                            }
+                        }
+                    }
+
                     for (LockRequest lr : lockQueue.lockRequests) {
                         if (visited.contains(lr.tid)) {
                             continue;
