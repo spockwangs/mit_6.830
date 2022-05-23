@@ -184,7 +184,7 @@ public class TableStats {
      */
     public double estimateScanCost() {
         // some code goes here
-        return ((double) this.numOfPages) * this.ioCostPerPage / 1E3;
+        return ((double) this.numOfPages) * this.ioCostPerPage;
     }
 
     /**
