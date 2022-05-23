@@ -169,19 +169,14 @@ public class LockManager {
                 }
             } else {
                 // Conversion case
+                assert lockReq.status == LockStatus.GRANTED;
                 lockReq.count++;
                 if (mode == LockMode.EXCLUSIVE && lockReq.mode == LockMode.SHARED) {
-                    if (lockReq.status == LockStatus.GRANTED) {
-                        lockReq.convertMode = mode;
-                        lockReq.status = LockStatus.CONVERTING;
-                    } else {
-                        lockReq.mode = mode;
-                    }
+                    lockReq.convertMode = mode;
+                    lockReq.status = LockStatus.CONVERTING;
                 }
-                switch (lockReq.status) {
-                case WAITING:
-                    throw new IllegalArgumentException("bad lock status");
-                case CONVERTING:
+                assert lockReq.status == LockStatus.GRANTED ||lockReq.status == LockStatus.CONVERTING;
+                if (lockReq.status == LockStatus.CONVERTING) {
                     if (isCompatible(lockReq.convertMode, maxGrantedMode)) {
                         lockReq.status = LockStatus.GRANTED;
                         lockReq.mode = lockReq.convertMode;
@@ -195,7 +190,6 @@ public class LockManager {
                             }
                         }
                     }       
-                    break;
                 }
                 if (wait) {
                     TransactionControlBlock tcb = txnTable.computeIfAbsent(tid, (key) -> new TransactionControlBlock(key));
@@ -220,6 +214,7 @@ public class LockManager {
                         throw new TransactionAbortedException();
                     }
                     // The conversion request is granted.
+                    lockReq.mode = maxMode(lockReq.mode, lockReq.convertMode);
                     lockReq.convertMode = null;
                     lockReq.lockClass = maxClass(lockReq.lockClass, lockClass);
                 } else if (lockReq.status == LockStatus.GRANTED) {
@@ -274,9 +269,6 @@ public class LockManager {
             boolean conversionWaiting = false;
             for (LockRequest lr : lockQueue.lockRequests) {
                 if (tid.equals(lr.tid)) {
-                    if (lr.status != LockStatus.GRANTED) {
-                        throw new IllegalArgumentException("can't unlock ungranted lock");
-                    }
                     if (lockClass != LockClass.LONG && (lr.lockClass.ordinal() > lockClass.ordinal() || lr.count > 1)) {
                         lr.count--;
                         return;
@@ -292,7 +284,7 @@ public class LockManager {
                     } else {
                         break;
                     }
-                } else {
+                } else if (lr.status == LockStatus.CONVERTING) {
                     // Conversion case
                     LockMode maxMode = null;
                     for (LockRequest l : lockQueue.lockRequests) {
@@ -310,10 +302,10 @@ public class LockManager {
                         lr.mode = lr.convertMode;
                         lr.convertMode = null;
                         lr.notify.signal();
-                        maxGrantedMode = maxMode(maxGrantedMode, lr.mode);
                     } else {
                         conversionWaiting = true;
                     }
+                    maxGrantedMode = maxMode(maxGrantedMode, lr.mode);
                 }
             }
             lockReq.head = null;
