@@ -169,14 +169,19 @@ public class LockManager {
                 }
             } else {
                 // Conversion case
-                assert lockReq.status == LockStatus.GRANTED;
                 lockReq.count++;
                 if (mode == LockMode.EXCLUSIVE && lockReq.mode == LockMode.SHARED) {
-                    lockReq.convertMode = mode;
-                    lockReq.status = LockStatus.CONVERTING;
+                    if (lockReq.status == LockStatus.GRANTED) {
+                        lockReq.convertMode = mode;
+                        lockReq.status = LockStatus.CONVERTING;
+                    } else {
+                        lockReq.mode = mode;
+                    }
                 }
-                assert lockReq.status == LockStatus.GRANTED || lockReq.status == LockStatus.CONVERTING;
-                if (lockReq.status == LockStatus.CONVERTING) {
+                switch (lockReq.status) {
+                case WAITING:
+                    throw new IllegalArgumentException("bad lock status");
+                case CONVERTING:
                     if (isCompatible(lockReq.convertMode, maxGrantedMode)) {
                         lockReq.status = LockStatus.GRANTED;
                         lockReq.mode = lockReq.convertMode;
@@ -190,6 +195,7 @@ public class LockManager {
                             }
                         }
                     }       
+                    break;
                 }
                 if (wait) {
                     TransactionControlBlock tcb = txnTable.computeIfAbsent(tid, (key) -> new TransactionControlBlock(key));
@@ -214,8 +220,6 @@ public class LockManager {
                         throw new TransactionAbortedException();
                     }
                     // The conversion request is granted.
-                    assert lockReq.status == LockStatus.GRANTED;
-                    lockReq.mode = lockReq.convertMode;
                     lockReq.convertMode = null;
                     lockReq.lockClass = maxClass(lockReq.lockClass, lockClass);
                 } else if (lockReq.status == LockStatus.GRANTED) {
@@ -290,7 +294,6 @@ public class LockManager {
                     }
                 } else {
                     // Conversion case
-                    assert lr.status == LockStatus.CONVERTING;
                     LockMode maxMode = null;
                     for (LockRequest l : lockQueue.lockRequests) {
                         if (tid.equals(l.tid) || l == lr) {
@@ -298,7 +301,7 @@ public class LockManager {
                         }
                         if (l.status == LockStatus.GRANTED || l.status == LockStatus.CONVERTING) {
                             maxMode = maxMode(maxMode, l.mode);
-                        } else if (l.status == LockStatus.WAITING) {
+                        } else {
                             break;
                         }
                     }
@@ -386,12 +389,30 @@ public class LockManager {
     }
 
     private void visit(TransactionControlBlock me) {
+        boolean hasDeadlock = false;
         LockQueue lockQueue;
         synchronized(me) {
+            if (me.cycle != null) {
+                hasDeadlock = true;
+            }
             if (me.wait == null) {
                 return;
             }
             lockQueue = me.wait.head;
+        }
+        if (hasDeadlock) {
+            lockQueue.lock.lock();
+            try {
+                for (LockRequest lr : lockQueue.lockRequests) {
+                    if (lr.tid.equals(me.tid)) {
+                        lr.status = LockStatus.DENIED;
+                        lr.notify.signal();
+                        return;
+                    }
+                }
+            } finally {
+                lockQueue.lock.unlock();
+            }
         }
         
         HashSet<TransactionId> visited = new HashSet<>();
@@ -403,16 +424,9 @@ public class LockManager {
                     if (me.wait == null) {
                         return;
                     }
-                    assert me.wait.status == LockStatus.CONVERTING || me.wait.status == LockStatus.WAITING;
-                    if (me.wait.head != lockQueue) {
+                    if (me.wait.status != LockStatus.CONVERTING && me.wait.status != LockStatus.WAITING) {
                         return;
                     }
-                    if (me.cycle != null) {
-                        me.wait.status = LockStatus.DENIED;
-                        me.wait.notify.signal();
-                        return;
-                    }
-                    
                     for (LockRequest lr : lockQueue.lockRequests) {
                         if (visited.contains(lr.tid)) {
                             continue;

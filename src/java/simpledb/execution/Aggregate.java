@@ -100,10 +100,7 @@ public class Aggregate extends Operator {
         this.child.open();
 
         Type type = this.child.getTupleDesc().getFieldType(this.afield);
-        Type gbfieldtype = null;
-        if (this.gfield != Aggregator.NO_GROUPING) {
-            gbfieldtype = this.child.getTupleDesc().getFieldType(this.gfield);
-        }
+        Type gbfieldtype = this.child.getTupleDesc().getFieldType(this.gfield);
         Aggregator aggregator;
         switch (type) {
         case INT_TYPE:
