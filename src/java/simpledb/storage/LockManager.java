@@ -142,7 +142,13 @@ public class LockManager {
                         tcb.lockRequests.add(lockReq);
                     }
                     while (lockReq.status != LockStatus.GRANTED && lockReq.status != LockStatus.DENIED) {
-                        lockReq.notify.awaitUninterruptibly();
+                        try {
+                        boolean a = lockReq.notify.await(5, TimeUnit.SECONDS);
+                        if (!a) {
+                            System.out.println("pid=" + pid + " tid=" + tid.getId() + " mode=" + mode);
+                        }
+                        } catch (InterruptedException e) {
+                        }
                     }
                     if (lockReq.status == LockStatus.DENIED) {
                         lockQueue.lockRequests.remove(lockReq);
@@ -201,7 +207,13 @@ public class LockManager {
                         }
                     }
                     while (lockReq.status != LockStatus.GRANTED && lockReq.status != LockStatus.DENIED) {
-                        lockReq.notify.awaitUninterruptibly();
+                        try {
+                        boolean a = lockReq.notify.await(5, TimeUnit.SECONDS);
+                        if (!a) {
+                            System.out.println("pid=" + pid + " tid=" + tid.getId() + " mode=" + mode);
+                        }
+                        } catch (InterruptedException e) {
+                        }
                     }
                     if (lockReq.status == LockStatus.DENIED) {
                         // Clear the conversion info.
@@ -372,9 +384,7 @@ public class LockManager {
 
     private void detectDeadlock() {
         for (TransactionControlBlock tcb : txnTable.values()) {
-            synchronized(tcb) {
-                tcb.cycle = null;
-            }
+            tcb.cycle = null;
         }
         for (TransactionControlBlock tcb : txnTable.values()) {
             visit(tcb);
@@ -393,7 +403,6 @@ public class LockManager {
         HashSet<TransactionId> visited = new HashSet<>();
         for (;;) {
             lockQueue.lock.lock();
-            TransactionControlBlock cycle = null;
             try {
                 synchronized(me) {
                     if (me.wait == null) {
@@ -406,13 +415,9 @@ public class LockManager {
                         return;
                     }
                     if (me.cycle != null) {
-                        for (LockRequest lr : lockQueue.lockRequests) {
-                            if (lr.tid.equals(me.tid)) {
-                                lr.status = LockStatus.DENIED;
-                                lr.notify.signal();
-                                return;
-                            }
-                        }
+                        me.wait.status = LockStatus.DENIED;
+                        me.wait.notify.signal();
+                        return;
                     }
 
                     for (LockRequest lr : lockQueue.lockRequests) {
@@ -425,7 +430,7 @@ public class LockManager {
                                 break;
                             }
                             if (!isCompatible(lr.mode, me.wait.mode) || !isCompatible(lr.convertMode, me.wait.mode)) {
-                                cycle = me.cycle = txnTable.get(lr.tid);
+                                me.cycle = txnTable.get(lr.tid);
                                 break;
                             }
                         } else if (me.wait.status == LockStatus.CONVERTING) {
@@ -435,7 +440,7 @@ public class LockManager {
                             if (!lr.tid.equals(me.tid)
                                 && (!isCompatible(lr.mode, me.wait.convertMode)
                                     || !isCompatible(lr.convertMode, me.wait.convertMode))) {
-                                cycle = me.cycle = txnTable.get(lr.tid);
+                                me.cycle = txnTable.get(lr.tid);
                                 break;
                             }
                         } else {
@@ -446,13 +451,11 @@ public class LockManager {
             } finally {
                 lockQueue.lock.unlock();
             }
-            if (cycle == null) {
+            if (me.cycle == null) {
                 return;
             }
-            visit(cycle);
-            synchronized(me) {
-                me.cycle = null;
-            }
+            visit(me.cycle);
+            me.cycle = null;
         }
     }
 
