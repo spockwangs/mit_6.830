@@ -28,7 +28,7 @@ public class HeapPage implements Page {
     byte[] oldData;
     private final Byte oldDataLock= (byte) 0;
 
-    private TransactionId lastDirtyTxid = null;
+	private volatile TransactionId dirtier = null;
 
     private int fixCount = 0;
     
@@ -301,9 +301,9 @@ public class HeapPage implements Page {
         // some code goes here
         // not necessary for lab1
         if (dirty) {
-            this.lastDirtyTxid = tid;
+            this.dirtier = tid;
         } else {
-            this.lastDirtyTxid = null;
+            this.dirtier = null;
         }
     }
 
@@ -313,7 +313,7 @@ public class HeapPage implements Page {
     public TransactionId isDirty() {
         // some code goes here
 	// Not necessary for lab1
-        return this.lastDirtyTxid;
+        return this.dirtier;
     }
 
     /**
