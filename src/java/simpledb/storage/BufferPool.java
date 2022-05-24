@@ -103,9 +103,9 @@ public class BufferPool {
         }
         Page page = this.pageMap.get(pid);
         if (page == null) {
-            // while (this.pageMap.size() >= this.maxNumPages) {
-            //       evictPage();
-            // }
+            while (this.pageMap.size() >= this.maxNumPages) {
+                 evictPage();
+            }
             DbFile dbFile = Database.getCatalog().getDatabaseFile(pid.getTableId());
             page = dbFile.readPage(pid);
             page.setFixCount(1);
