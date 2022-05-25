@@ -112,6 +112,9 @@ public class BufferPool {
                     page.setFixCount(1);
                 }
             }
+            if (perm == Permissions.READ_WRITE) {
+                page.markDirty(true, tid);
+            }
             return page;
         }
     }
