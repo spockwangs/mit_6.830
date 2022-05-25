@@ -92,9 +92,15 @@ public class BufferPool {
     public  Page getPage(TransactionId tid, PageId pid, Permissions perm)
         throws TransactionAbortedException, DbException {
         // some code goes here
-        Page page = null;
+        LockManager.LockMode mode;
+        if (perm == Permissions.READ_ONLY) {
+            mode = LockManager.LockMode.SHARED;
+        } else {
+            mode = LockManager.LockMode.EXCLUSIVE;
+        }
+        lockManager.lock(tid, pid, mode, LockManager.LockClass.SHORT);
         synchronized (this) {
-            page = this.pageMap.get(pid);
+            Page page = this.pageMap.get(pid);
             if (page == null) {
                 while (this.pageMap.size() >= this.maxNumPages) {
                     evictPage();
@@ -106,15 +112,8 @@ public class BufferPool {
             if (perm == Permissions.READ_WRITE) {
                 txnTable.computeIfAbsent(tid, (key) -> new HashSet<>()).add(pid);
             }
+            return page;
         }
-        LockManager.LockMode mode;
-        if (perm == Permissions.READ_ONLY) {
-            mode = LockManager.LockMode.SHARED;
-        } else {
-            mode = LockManager.LockMode.EXCLUSIVE;
-        }
-        lockManager.lock(tid, pid, mode, LockManager.LockClass.SHORT);
-        return page;
     }
 
     /**
@@ -175,6 +174,7 @@ public class BufferPool {
                             discardPage(pid);
                         }
                     }
+                    txnTable.remove(tid);
                 }
             }
             this.lockManager.unlockTransaction(tid);
