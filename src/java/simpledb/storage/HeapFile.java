@@ -135,7 +135,6 @@ public class HeapFile implements DbFile {
                     result.add(page);
                     return result;
                 } else {
-                    page.decFixCount();
                     bp.unsafeReleasePage(tid, pid);
                 }
             }
@@ -159,7 +158,6 @@ public class HeapFile implements DbFile {
                 result.add(page);
                 return result;
             }
-            page.decFixCount();
             bp.unsafeReleasePage(tid, pid);
         }
     }
@@ -191,9 +189,6 @@ public class HeapFile implements DbFile {
             
             private Iterator<Tuple> getPageIterator(int pageNo) throws DbException, TransactionAbortedException {
                 HeapPageId pageId = new HeapPageId(getId(), curPageNo);
-                if (this.curPage != null) {
-                    this.curPage.decFixCount();
-                }
                 this.curPage = (HeapPage) Database.getBufferPool().getPage(tid, pageId, Permissions.READ_ONLY);
                 return this.curPage.iterator();
             }
@@ -237,7 +232,6 @@ public class HeapFile implements DbFile {
                 curPageNo = 0;
                 it = null;
                 if (this.curPage != null) {
-                    this.curPage.decFixCount();
                     this.curPage = null;
                 }
             }

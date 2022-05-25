@@ -28,8 +28,6 @@ public class BTreeRootPtrPage implements Page {
 
 	private byte[] oldData;
 
-    private int fixCount = 1;
-
 	/**
 	 * Constructor.
 	 * Construct the BTreeRootPtrPage from a set of bytes of data read from
@@ -225,22 +223,6 @@ public class BTreeRootPtrPage implements Page {
 	public static int getPageSize() {
 		return PAGE_SIZE;
 	}
-
-    public int getFixCount() {
-        return fixCount;
-    }
-
-    public void setFixCount(int a) {
-        fixCount = a;
-    }
-
-    public void incFixCount() {
-        fixCount++;
-    }
-    
-    public void decFixCount() {
-        fixCount--;
-    }
 
 }
 

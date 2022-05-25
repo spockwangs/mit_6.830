@@ -30,8 +30,6 @@ public class HeapPage implements Page {
 
 	private volatile TransactionId dirtier = null;
 
-    private int fixCount = 0;
-    
     /**
      * Create a HeapPage from a set of bytes of data read from disk.
      * The format of a HeapPage is a set of header bytes indicating
@@ -388,22 +386,6 @@ public class HeapPage implements Page {
                 throw new UnsupportedOperationException("Cannot remove an element");
             }
         };
-    }
-
-    public int getFixCount() {
-        return this.fixCount;
-    }
-    
-    public void setFixCount(int a) {
-        this.fixCount = a;
-    }
-    
-    public void incFixCount() {
-        this.fixCount++;
-    }
-    
-    public void decFixCount() {
-        this.fixCount--;
     }
 }
 
