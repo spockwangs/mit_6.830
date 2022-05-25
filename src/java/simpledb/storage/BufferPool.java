@@ -114,6 +114,7 @@ public class BufferPool {
             mode = LockManager.LockMode.EXCLUSIVE;
         }
         lockManager.lock(tid, pid, mode, LockManager.LockClass.SHORT);
+        return page;
     }
 
     /**
