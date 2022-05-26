@@ -142,13 +142,7 @@ public class LockManager {
                         tcb.lockRequests.add(lockReq);
                     }
                     while (lockReq.status != LockStatus.GRANTED && lockReq.status != LockStatus.DENIED) {
-                        try {
-                        boolean a = lockReq.notify.await(5, TimeUnit.SECONDS);
-                        if (!a) {
-                            System.out.println("pid=" + pid + " tid=" + tid.getId() + " mode=" + mode);
-                        }
-                        } catch (InterruptedException e) {
-                        }
+                        lockReq.notify.awaitUninterruptibly();
                     }
                     if (lockReq.status == LockStatus.DENIED) {
                         lockQueue.lockRequests.remove(lockReq);
@@ -207,13 +201,7 @@ public class LockManager {
                         }
                     }
                     while (lockReq.status != LockStatus.GRANTED && lockReq.status != LockStatus.DENIED) {
-                        try {
-                        boolean a = lockReq.notify.await(5, TimeUnit.SECONDS);
-                        if (!a) {
-                            System.out.println("pid=" + pid + " tid=" + tid.getId() + " mode=" + mode);
-                        }
-                        } catch (InterruptedException e) {
-                        }
+                        lockReq.notify.awaitUninterruptibly();
                     }
                     if (lockReq.status == LockStatus.DENIED) {
                         // Clear the conversion info.
